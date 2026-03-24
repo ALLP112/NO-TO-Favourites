@@ -94,8 +94,6 @@ class PolymarketScanner:
         no_dates = 0
         already_past = 0
         too_far = 0
-        live = 0
-        no_start_heuristic = 0
         no_fav = 0
         accepted = 0
 
@@ -110,21 +108,16 @@ class PolymarketScanner:
                 already_past += 1
             elif opp == "too_far":
                 too_far += 1
-            elif opp == "live":
-                live += 1
-            elif opp == "no_start_heuristic":
-                no_start_heuristic += 1
-            elif opp == "no_fav":
+            else:
                 no_fav += 1
 
-        # Sort by soonest start time — we want fastest turnover
+        # Sort by soonest resolution — fastest turnover
         opps.sort(key=lambda x: x["hours_until_resolve"])
         log.info(
-            f"Found {len(opps)} pre-game NO targets from "
+            f"Found {len(opps)} NO targets from "
             f"{len(markets)} sports markets (within {self.max_hours}h) | "
             f"Rejected: no_dates={no_dates} past={already_past} "
-            f"too_far={too_far} live={live} "
-            f"no_start={no_start_heuristic} no_fav={no_fav}"
+            f"too_far={too_far} no_fav={no_fav}"
         )
         return opps
 
@@ -382,10 +375,13 @@ class PolymarketScanner:
         or a rejection reason string for diagnostics.
 
         TIMING LOGIC:
-          - Polymarket's endDate = market resolution deadline (often days away)
-          - startDate / gameStartTime = actual fixture kick-off
-          - We filter on GAME START, not market end
-          - Game must start within max_hours AND must not have started yet
+          Polymarket's startDate = when the market was CREATED (always in the past)
+          Polymarket's endDate   = resolution deadline (hours to days after the game)
+
+          There is NO reliable "game kick-off time" field in the API.
+          So we use endDate as a proxy — if a market resolves within
+          max_hours, the underlying fixture is likely happening soon.
+          We sort by soonest endDate to get the fastest turnover.
         """
         try:
             cid = market.get("conditionId") or market.get("condition_id")
@@ -398,18 +394,7 @@ class PolymarketScanner:
                 or "Unknown market"
             )
 
-            # ── Find game start time ────────────────────────────────
-            start_raw = (
-                market.get("_event_start")
-                or market.get("startDate")
-                or market.get("start_date_iso")
-                or market.get("startDateIso")
-                or market.get("gameStartTime")
-                or market.get("game_start_time")
-            )
-            start_dt = self._parse_dt(start_raw)
-
-            # ── Find market end/resolution date (used as fallback) ──
+            # ── Find market end / resolution date ───────────────────
             end_raw = (
                 market.get("_event_end")
                 or market.get("endDate")
@@ -418,33 +403,18 @@ class PolymarketScanner:
                 or market.get("expirationDate")
             )
             end_dt = self._parse_dt(end_raw)
+            if not end_dt:
+                return "no_dates"
 
-            # ── Timing filter ───────────────────────────────────────
-            if start_dt:
-                # We have a game start time — use it directly
-                if start_dt <= now:
-                    return "live"  # game has started, skip
+            hours_to_end = (end_dt - now).total_seconds() / 3600.0
 
-                hours_to_start = (start_dt - now).total_seconds() / 3600.0
-                if hours_to_start > self.max_hours:
-                    return "too_far"  # game too far out
+            if hours_to_end <= 0:
+                return "already_past"  # already resolved
 
-                hours_until_resolve = hours_to_start  # approximate
-            elif end_dt:
-                # No start time — fall back to end date with caution
-                hours_to_end = (end_dt - now).total_seconds() / 3600.0
-                if hours_to_end <= 0:
-                    return "already_past"
-                # Without a start time, end date could be the resolution
-                # deadline days away. Accept if end is within max_hours,
-                # but reject very short windows (likely already live)
-                if hours_to_end > self.max_hours:
-                    return "too_far"
-                if hours_to_end < 3.0:
-                    return "no_start_heuristic"  # probably live
-                hours_until_resolve = hours_to_end
-            else:
-                return "no_dates"  # can't verify timing at all
+            if hours_to_end > self.max_hours:
+                return "too_far"  # resolves too far out
+
+            hours_until_resolve = hours_to_end
 
             # ── Prices / favourite detection ────────────────────────
             prices_raw = (
@@ -488,14 +458,13 @@ class PolymarketScanner:
                 "no_price":             no_price,
                 "volume":               volume,
                 "end_date":             end_raw[:16] if end_raw else "unknown",
-                "start_date":           start_raw[:16] if start_raw else "unknown",
                 "hours_until_resolve":  round(hours_until_resolve, 1),
                 "market_type":          "binary",
                 "sport":                sport_label,
                 "driver": (
                     f"Favourite '{fav_outcome}' at {fav_price:.0%}. "
                     f"NO shares at {no_price:.0%}. "
-                    f"Starts in {hours_until_resolve:.1f}h. "
+                    f"Resolves in {hours_until_resolve:.1f}h. "
                     f"Volume ${volume:,.0f}."
                 ),
             }
@@ -508,7 +477,8 @@ class PolymarketScanner:
     def _detect_sport(market: dict, question: str) -> str:
         """Best-effort detection of which sport this is."""
         q = question.lower()
-        cat = (market.get("_event_category") or "").lower()
+        raw_cat = market.get("_event_category")
+        cat = PolymarketScanner._safe_str(raw_cat) if raw_cat else ""
 
         mapping = [
             (["nba"],                            "NBA"),

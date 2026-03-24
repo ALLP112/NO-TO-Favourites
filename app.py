@@ -16,8 +16,8 @@ from scanner import PolymarketScanner
 
 # ── Config ──────────────────────────────────────────────────────────────────
 BANKROLL          = float(os.getenv("BANKROLL", 10_000))
-STAKE_PER_POS     = float(os.getenv("STAKE_PER_POS", 750))
-MAX_OPEN          = int(os.getenv("MAX_OPEN", 13))         # floor(10000/750)
+STAKE_PER_POS     = float(os.getenv("STAKE_PER_POS", 400))
+MAX_OPEN          = int(os.getenv("MAX_OPEN", 25))         # floor(10000/400)
 MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 100_000))
 MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))
 MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))
@@ -292,6 +292,8 @@ def api_status():
         "last_trade":           state["last_trade"],
         "open_positions_count": state["open_positions_count"],
         "max_open_positions":   settings["max_open_positions"],
+        "stake_per_pos":        settings["reference_stake_amount"],
+        "bankroll":             settings["total_bankroll_usd"],
         "pnl":                  state["pnl"],
         "free_bankroll":        state["free_bankroll"],
         "allocated_bankroll":   state["allocated_bankroll"],

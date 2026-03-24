@@ -20,7 +20,6 @@ STAKE_PER_POS     = float(os.getenv("STAKE_PER_POS", 750))
 MAX_OPEN          = int(os.getenv("MAX_OPEN", 13))        # floor(10000/750)
 MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 100_000))
 SCAN_INTERVAL     = int(os.getenv("SCAN_INTERVAL", 120))  # seconds
-MIN_EDGE_PP       = float(os.getenv("MIN_EDGE_PP", 3.0))  # min perceived edge
 MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))  # don't short near-certs
 MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))  # must actually be a fav
 
@@ -62,7 +61,6 @@ scanner = PolymarketScanner(
     min_volume=MIN_VOLUME,
     min_fav_price=MIN_FAV_PRICE,
     max_fav_price=MAX_FAV_PRICE,
-    min_edge_pp=MIN_EDGE_PP,
 )
 
 lock = threading.Lock()
@@ -108,11 +106,10 @@ def _open_position(opp: dict):
         "timing_confidence":   "medium",
         "stake":               STAKE_PER_POS,
         "price":               no_price,
-        "edge_pp":             opp["edge_pp"],
         "expected_hold_hours": opp.get("hold_hours", 24),
-        "model_prob":          opp["model_no_prob"],
         "key_driver":          opp.get("driver", ""),
         "fav_price":           opp["fav_price"],
+        "volume":              opp["volume"],
         "shares":              shares,
         "potential_profit":    profit_if_win,
         "opened_at":           _now(),
@@ -126,7 +123,7 @@ def _open_position(opp: dict):
     state["free_bankroll"]      -= STAKE_PER_POS
     state["last_trade"]          = _now()
     log.info(f"OPENED  NO on '{opp['fav_outcome']}' | {opp['question'][:60]} | "
-             f"NO@{no_price:.2f} | edge {opp['edge_pp']:.1f}pp")
+             f"NO@{no_price:.2f} | vol ${opp['volume']:,.0f}")
 
 
 def _check_resolutions():
@@ -213,15 +210,7 @@ def _scan_loop():
 # ── Routes ──────────────────────────────────────────────────────────────────
 @app.route("/")
 def dashboard():
-    return render_template(
-        "dashboard.html",
-        state={
-            **state,
-            "free_bankroll_usd":     state["free_bankroll"],
-            "allocated_bankroll_usd": state["allocated_bankroll"],
-        },
-        settings=settings,
-    )
+    return render_template("dashboard.html")
 
 
 @app.route("/start", methods=["POST"])

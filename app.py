@@ -18,7 +18,7 @@ from scanner import PolymarketScanner
 BANKROLL          = float(os.getenv("BANKROLL", 10_000))
 STAKE_PER_POS     = float(os.getenv("STAKE_PER_POS", 400))
 MAX_OPEN          = int(os.getenv("MAX_OPEN", 25))         # floor(10000/400)
-MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 100_000))
+MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 30_000))
 MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))
 MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))
 MAX_HOURS         = float(os.getenv("MAX_HOURS", 168))      # endDate = resolution deadline, not game time. 168h = 7 days
@@ -294,6 +294,7 @@ def api_status():
         "max_open_positions":   settings["max_open_positions"],
         "stake_per_pos":        settings["reference_stake_amount"],
         "bankroll":             settings["total_bankroll_usd"],
+        "min_volume":           settings["min_volume"],
         "pnl":                  state["pnl"],
         "free_bankroll":        state["free_bankroll"],
         "allocated_bankroll":   state["allocated_bankroll"],

@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EdgeBot · NO on Favourites</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #07070c;
+            --surface: #0e0e16;
+            --surface2: #16161f;
+            --surface3: #1c1c28;
+            --border: #252535;
+            --border-hi: #353548;
+            --text: #e2e2ef;
+            --dim: #7a7a95;
+            --dim2: #55556a;
+            --green: #00ff88;
+            --green-dim: rgba(0,255,136,.12);
+            --red: #ff4466;
+            --red-dim: rgba(255,68,102,.12);
+            --yellow: #ffcc00;
+            --yellow-dim: rgba(255,204,0,.1);
+            --blue: #4488ff;
+            --blue-dim: rgba(68,136,255,.1);
+            --orange: #ff8844;
+            --orange-dim: rgba(255,136,68,.12);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'DM Sans', sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,0,0,.03) 2px,
+                rgba(0,0,0,.03) 4px
+            );
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .c { max-width: 1120px; margin: 0 auto; padding: 1.5rem; }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 1.25rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+        .logo-group { display: flex; align-items: center; gap: .75rem; }
+        header h1 { font-size: 1.4rem; font-weight: 700; color: var(--green); letter-spacing: .05em; }
+        header h1 span { color: var(--dim); font-weight: 400; }
+        .strategy-tag {
+            font-size: .58rem;
+            padding: .2rem .55rem;
+            border-radius: 4px;
+            background: var(--orange-dim);
+            color: var(--orange);
+            border: 1px solid rgba(255,136,68,.3);
+            font-weight: 700;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+        }
+        .header-right { display: flex; align-items: center; gap: .75rem; }
+        .badge {
+            font-size: .62rem;
+            padding: .2rem .5rem;
+            border-radius: 4px;
+            font-weight: 700;
+            letter-spacing: .04em;
+        }
+        .badge-paper {
+            background: var(--yellow-dim);
+            color: var(--yellow);
+            border: 1px solid rgba(255,204,0,.25);
+        }
+        #clk { font-size: .62rem; color: var(--dim2); }
+
+        .strat-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--orange);
+            border-radius: 6px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.25rem;
+        }
+        .strat-title {
+            font-size: .6rem;
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            color: var(--orange);
+            margin-bottom: .4rem;
+        }
+        .strat-text {
+            font-size: .75rem;
+            color: var(--dim);
+            line-height: 1.55;
+        }
+        .strat-text strong { color: var(--text); font-weight: 600; }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: .75rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: .7rem 1.25rem;
+            margin-bottom: 1rem;
+        }
+        .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .dot-on {
+            background: var(--green);
+            box-shadow: 0 0 8px var(--green), 0 0 20px rgba(0,255,136,.15);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .dot-off { background: var(--red); box-shadow: 0 0 6px rgba(255,68,102,.3); }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+        #sTxt { font-size: .82rem; flex: 1; }
+        #sStep { font-size: .68rem; color: var(--dim2); }
+
+        .btns { display: flex; gap: .5rem; margin-bottom: 1.25rem; }
+        button {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .78rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 6px;
+            padding: .6rem 1.4rem;
+            cursor: pointer;
+            transition: all .15s;
+            letter-spacing: .03em;
+        }
+        button:hover { transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+        .btn-go { background: var(--green); color: #000; }
+        .btn-go:hover { box-shadow: 0 4px 20px rgba(0,255,136,.25); }
+        .btn-stop { background: var(--red); color: #fff; }
+        .btn-stop:hover { box-shadow: 0 4px 20px rgba(255,68,102,.25); }
+
+        .pnl-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.5rem 1.25rem 1.25rem;
+            margin-bottom: 1.25rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .pnl-box::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--green), transparent);
+            opacity: .4;
+        }
+        .pnl-num { font-size: 2.5rem; font-weight: 700; letter-spacing: -.02em; }
+        .pnl-num.pos { color: var(--green); text-shadow: 0 0 30px rgba(0,255,136,.15); }
+        .pnl-num.neg { color: var(--red); text-shadow: 0 0 30px rgba(255,68,102,.15); }
+        .pnl-num.zero { color: var(--dim); }
+        .pnl-label {
+            font-size: .58rem;
+            text-transform: uppercase;
+            letter-spacing: .14em;
+            color: var(--dim2);
+            margin-top: .15rem;
+        }
+        .pnl-row {
+            display: flex;
+            justify-content: center;
+            gap: 2.5rem;
+            margin-top: .85rem;
+            flex-wrap: wrap;
+        }
+        .pnl-stat .v { font-size: 1.05rem; font-weight: 700; }
+        .pnl-stat .l {
+            font-size: .5rem;
+            color: var(--dim2);
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            margin-top: .1rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: .6rem;
+            margin-bottom: 1.25rem;
+        }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: .75rem .6rem;
+            text-align: center;
+            transition: border-color .2s;
+        }
+        .card:hover { border-color: var(--border-hi); }
+        .card .v { font-size: 1rem; font-weight: 700; }
+        .card .l {
+            font-size: .5rem;
+            color: var(--dim2);
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            margin-top: .2rem;
+        }
+
+        .section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.1rem;
+            margin-bottom: 1.25rem;
+        }
+        .section-hd {
+            font-size: .62rem;
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            color: var(--dim);
+            margin-bottom: .75rem;
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+        }
+        .section-hd .count { color: var(--orange); }
+        .section-meta {
+            font-size: .68rem;
+            color: var(--dim2);
+            margin-bottom: .8rem;
+            line-height: 1.4;
+        }
+
+        .open-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+            gap: .75rem;
+        }
+        .open-card {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--orange);
+            border-radius: 8px;
+            padding: 1rem;
+            position: relative;
+            transition: border-color .2s, background .2s;
+        }
+        .open-card:hover {
+            border-color: var(--border-hi);
+            background: var(--surface3);
+        }
+        .open-live {
+            position: absolute;
+            top: .7rem;
+            right: .7rem;
+            display: flex;
+            align-items: center;
+            gap: .35rem;
+        }
+        .open-live .lbl { font-size: .55rem; color: var(--orange); font-weight: 600; }
+        .live-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--orange);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        .mkt-q {
+            font-size: .9rem;
+            font-weight: 700;
+            line-height: 1.35;
+            margin-bottom: .3rem;
+            padding-right: 3.2rem;
+            color: var(--text);
+        }
+        .sel-line {
+            font-size: .82rem;
+            color: var(--red);
+            margin-bottom: .3rem;
+            font-weight: 600;
+        }
+        .no-tag {
+            display: inline-block;
+            background: var(--red-dim);
+            color: var(--red);
+            padding: .08rem .35rem;
+            border-radius: 3px;
+            font-size: .68rem;
+            font-weight: 700;
+            margin-right: .2rem;
+        }
+        .meta-line {
+            font-size: .65rem;
+            color: var(--dim2);
+            margin-bottom: .5rem;
+            line-height: 1.45;
+        }
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: .4rem;
+            margin-top: .45rem;
+        }
+        .detail .dl { font-size: .48rem; color: var(--dim2); letter-spacing: .06em; }
+        .detail .dv { font-size: .76rem; font-weight: 600; }
+        .dv-g { color: var(--green); }
+        .dv-r { color: var(--red); }
+        .dv-o { color: var(--orange); }
+        .driver {
+            font-size: .68rem;
+            color: var(--dim);
+            margin-top: .55rem;
+            line-height: 1.45;
+            border-top: 1px solid var(--border);
+            padding-top: .55rem;
+        }
+
+        .trade-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: .7rem .6rem;
+            border-bottom: 1px solid rgba(37,37,53,.6);
+            gap: .6rem;
+            transition: background .15s;
+        }
+        .trade-row:hover { background: var(--surface2); }
+        .trade-row:last-child { border-bottom: none; }
+        .trade-info { flex: 1; min-width: 0; }
+        .trade-q { font-size: .78rem; font-weight: 600; line-height: 1.3; }
+        .trade-sel { font-size: .7rem; color: var(--red); margin-top: .12rem; }
+        .trade-meta {
+            font-size: .6rem;
+            color: var(--dim2);
+            margin-top: .12rem;
+            line-height: 1.4;
+        }
+        .pill {
+            font-size: .52rem;
+            padding: .15rem .4rem;
+            border-radius: 3px;
+            font-weight: 700;
+            text-transform: uppercase;
+            white-space: nowrap;
+            letter-spacing: .04em;
+        }
+        .pill-win { background: var(--green-dim); color: var(--green); }
+        .pill-loss { background: var(--red-dim); color: var(--red); }
+        .pill-void { background: var(--blue-dim); color: var(--blue); }
+        .pill-unk { background: rgba(122,122,149,.12); color: var(--dim); }
+        .trade-pnl { font-weight: 700; font-size: .88rem; white-space: nowrap; }
+        .trade-pnl.pos { color: var(--green); }
+        .trade-pnl.neg { color: var(--red); }
+        .trade-pnl.flat { color: var(--dim); }
+
+        .empty {
+            text-align: center;
+            padding: 1.8rem 1rem;
+            color: var(--dim2);
+            font-size: .78rem;
+            line-height: 1.5;
+        }
+        .err {
+            border-color: var(--red) !important;
+            border-left: 3px solid var(--red);
+            color: var(--red);
+            font-size: .72rem;
+            padding: .75rem 1rem;
+            word-break: break-all;
+        }
+
+        @media (max-width: 640px) {
+            .c { padding: 1rem; }
+            .pnl-num { font-size: 1.8rem; }
+            .grid { grid-template-columns: repeat(3, 1fr); }
+            .open-grid { grid-template-columns: 1fr; }
+            .pnl-row { gap: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+<div class="c">
+    <header>
+        <div class="logo-group">
+            <h1 class="mono">EDGE<span>BOT</span></h1>
+            <span class="strategy-tag mono">NO on favs</span>
+        </div>
+        <div class="header-right">
+            <span class="mono badge badge-paper">PAPER</span>
+            <span class="mono" id="clk"></span>
+        </div>
+    </header>
+
+    <div class="strat-box mono">
+        <div class="strat-title">Strategy: fade the favourite</div>
+        <div class="strat-text">
+            Buy <strong>NO shares</strong> on the favourite outcome in sports markets with <strong>$100k+ volume</strong>.
+            Exploits the favourite-longshot bias — favourites are systematically overpriced on prediction markets.
+            <strong>$750</strong> per position · <strong id="sBankroll">$10,000</strong> bankroll · <strong id="sMaxPos">13</strong> max positions.
+        </div>
+    </div>
+
+    <div class="status-bar mono">
+        <span class="dot dot-off" id="dot"></span>
+        <span id="sTxt">STOPPED</span>
+        <span id="sStep" style="font-size:.68rem;color:var(--dim2)">idle</span>
+    </div>
+
+    <div class="btns" id="btns">
+        <button class="btn-go" onclick="doStart()">▶ START SCANNER</button>
+    </div>
+
+    <div class="pnl-box mono">
+        <div class="pnl-num zero" id="pnlNum">$0.00</div>
+        <div class="pnl-label">Paper P&amp;L</div>
+        <div class="pnl-row">
+            <div class="pnl-stat"><div class="v" id="pWins" style="color:var(--green)">0</div><div class="l">Wins</div></div>
+            <div class="pnl-stat"><div class="v" id="pLosses" style="color:var(--red)">0</div><div class="l">Losses</div></div>
+            <div class="pnl-stat"><div class="v" id="pTotal" style="color:var(--blue)">0</div><div class="l">Total trades</div></div>
+            <div class="pnl-stat"><div class="v" id="pWinRate" style="color:var(--yellow)">0%</div><div class="l">Win rate</div></div>
+        </div>
+    </div>
+
+    <div class="grid mono">
+        <div class="card"><div class="v" style="color:var(--blue)" id="nScan">0</div><div class="l">Scans</div></div>
+        <div class="card"><div class="v" style="color:var(--yellow)" id="nLast">never</div><div class="l">Last scan</div></div>
+        <div class="card"><div class="v" style="color:var(--green)" id="nTrade">none</div><div class="l">Last trade</div></div>
+        <div class="card"><div class="v" style="color:var(--orange)" id="nOpen">0/13</div><div class="l">Open positions</div></div>
+        <div class="card"><div class="v" style="color:var(--blue)" id="nBankroll">$10,000</div><div class="l">Bankroll</div></div>
+        <div class="card"><div class="v" style="color:var(--green)" id="nFree">$10,000</div><div class="l">Free capital</div></div>
+    </div>
+
+    <div class="section err mono" id="errBox" style="display:none"></div>
+
+    <div class="section" id="openSection">
+        <div class="section-hd mono">
+            <span>Open NO positions</span>
+            <span class="count" id="openCount">(0/13)</span>
+        </div>
+        <div class="section-meta mono" id="openMeta">Allocated: $0 · Free: $10,000 · Stake per position: $750</div>
+        <div id="openGrid" class="open-grid"></div>
+        <div class="empty" id="openEmpty">No open NO positions. Start the scanner to begin.</div>
+    </div>
+
+    <div class="section">
+        <div class="section-hd mono">Closed positions</div>
+        <div id="closedList"></div>
+        <div class="empty" id="closedEmpty">No closed trades yet. Positions will appear here once resolved.</div>
+    </div>
+</div>
+
+<script>
+const API = window.location.origin;
+
+function fmt(n) { return Math.round(n).toLocaleString('en-US'); }
+function fmt2(n) { return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function pct(n) { return Math.round(n * 100); }
+function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function doStart() {
+    fetch(API + '/start', {method:'POST'}).then(function(){ refresh(); }).catch(function(){});
+}
+function doStop() {
+    fetch(API + '/stop', {method:'POST'}).then(function(){ refresh(); }).catch(function(){});
+}
+
+function updateBtns(running) {
+    document.getElementById('btns').innerHTML = running
+        ? '<button class="btn-stop" onclick="doStop()">■ STOP SCANNER</button>'
+        : '<button class="btn-go" onclick="doStart()">▶ START SCANNER</button>';
+}
+
+function updateStatus(d) {
+    var running = d.running;
+    document.getElementById('dot').className = 'dot ' + (running ? 'dot-on' : 'dot-off');
+    document.getElementById('sTxt').textContent = running ? 'RUNNING' : 'STOPPED';
+    document.getElementById('sStep').textContent = d.current_step || 'idle';
+    updateBtns(running);
+
+    document.getElementById('nScan').textContent = d.scan_count || 0;
+    document.getElementById('nLast').textContent = d.last_scan ? d.last_scan.substring(0,16) : 'never';
+    document.getElementById('nTrade').textContent = d.last_trade ? d.last_trade.substring(0,16) : 'none';
+
+    var maxPos = d.max_open_positions || 13;
+    var openCount = d.open_positions_count || 0;
+    document.getElementById('nOpen').textContent = openCount + '/' + maxPos;
+
+    var free = d.free_bankroll || 0;
+    var alloc = d.allocated_bankroll || 0;
+    document.getElementById('nFree').textContent = '$' + fmt(free);
+    document.getElementById('nBankroll').textContent = '$' + fmt(free + alloc);
+    document.getElementById('openCount').textContent = '(' + openCount + '/' + maxPos + ')';
+    document.getElementById('openMeta').textContent = 'Allocated: $' + fmt(alloc) + ' · Free: $' + fmt(free) + ' · Stake per position: $750';
+
+    var pnl = d.pnl || {total:0, wins:0, losses:0};
+    var pt = pnl.total || 0;
+    var el = document.getElementById('pnlNum');
+    el.textContent = (pt > 0 ? '+' : '') + '$' + fmt2(pt);
+    el.className = 'pnl-num mono ' + (pt > 0 ? 'pos' : pt < 0 ? 'neg' : 'zero');
+
+    document.getElementById('pWins').textContent = pnl.wins || 0;
+    document.getElementById('pLosses').textContent = pnl.losses || 0;
+    var total = (pnl.wins||0) + (pnl.losses||0);
+    document.getElementById('pTotal').textContent = total;
+    document.getElementById('pWinRate').textContent = total > 0 ? Math.round((pnl.wins/total)*100)+'%' : '0%';
+
+    var errBox = document.getElementById('errBox');
+    if (d.error) { errBox.style.display = 'block'; errBox.textContent = '⚠ ' + d.error; }
+    else { errBox.style.display = 'none'; }
+
+    var emptyEl = document.getElementById('openEmpty');
+    if (openCount > 0) { emptyEl.style.display = 'none'; }
+    else {
+        emptyEl.style.display = 'block';
+        emptyEl.textContent = running
+            ? 'No open NO positions. Scanning Polymarket for overpriced favourites...'
+            : 'No open NO positions. Start the scanner to begin.';
+    }
+}
+
+function renderOpen(trades) {
+    var grid = document.getElementById('openGrid');
+    if (!trades || trades.length === 0) { grid.innerHTML = ''; return; }
+    grid.innerHTML = trades.map(function(t) {
+        var noPrice = t.price || (1-(t.fav_price||0.5));
+        var potProfit = t.potential_profit || ((t.stake/noPrice)-t.stake);
+        return '<div class="open-card mono">'
+            + '<div class="open-live"><div class="live-dot"></div><span class="lbl">OPEN</span></div>'
+            + '<div class="mkt-q">' + esc(t.market_question||'Unknown') + '</div>'
+            + '<div class="sel-line"><span class="no-tag">NO</span> ' + esc(t.selection||'') + '</div>'
+            + '<div class="meta-line">' + esc(t.market_domain||'sports') + ' · ' + esc(t.market_structure||'binary') + ' · Settles ' + esc(t.expected_settlement||'unknown') + ' · ' + esc(t.timing_confidence||'medium') + ' timing</div>'
+            + '<div class="detail-grid">'
+            + '<div class="detail"><div class="dl">STAKE</div><div class="dv">$'+fmt(t.stake||0)+'</div></div>'
+            + '<div class="detail"><div class="dl">NO PRICE</div><div class="dv dv-o">'+pct(noPrice)+'¢</div></div>'
+            + '<div class="detail"><div class="dl">VOLUME</div><div class="dv dv-g">$'+fmt(t.volume||0)+'</div></div>'
+            + '<div class="detail"><div class="dl">FAV PRICE</div><div class="dv dv-r">'+pct(t.fav_price||0)+'¢</div></div>'
+            + '<div class="detail"><div class="dl">SHARES</div><div class="dv">'+fmt(t.shares||0)+'</div></div>'
+            + '<div class="detail"><div class="dl">IF WIN</div><div class="dv dv-g">+$'+fmt(potProfit)+'</div></div>'
+            + '</div>'
+            + (t.key_driver ? '<div class="driver">'+esc(t.key_driver)+'</div>' : '')
+            + '</div>';
+    }).join('');
+}
+
+function renderClosed(trades) {
+    var list = document.getElementById('closedList');
+    var empty = document.getElementById('closedEmpty');
+    if (!trades || trades.length === 0) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = trades.map(function(t) {
+        var result = t.result || 'unknown';
+        var pillClass = result==='win'?'pill-win':result==='loss'?'pill-loss':result==='void'?'pill-void':'pill-unk';
+        var profit = t.profit || 0;
+        var pnlClass = 'flat', pnlText = '$0';
+        if (result==='win') { pnlClass='pos'; pnlText='+$'+fmt(profit); }
+        else if (result==='loss') { pnlClass='neg'; pnlText='-$'+fmt(Math.abs(profit)); }
+        else if (result==='void') { pnlText='$'+fmt(profit)+' (void)'; }
+        var noPrice = t.price || (1-(t.fav_price||0.5));
+        return '<div class="trade-row mono">'
+            + '<div class="trade-info">'
+            + '<div class="trade-q">'+esc(t.market_question||'Unknown')+'</div>'
+            + '<div class="trade-sel">NO on '+esc(t.selection||'')+'</div>'
+            + '<div class="trade-meta">'+esc(t.market_domain||'sports')+' · $'+fmt(t.stake||0)+' @ '+pct(noPrice)+'¢ NO · Fav was '+pct(t.fav_price||0)+'¢ · Vol $'+fmt(t.volume||0)+'</div>'
+            + '</div>'
+            + '<span class="pill '+pillClass+'">'+result.toUpperCase()+'</span>'
+            + '<span class="trade-pnl '+pnlClass+'">'+pnlText+'</span>'
+            + '</div>';
+    }).join('');
+}
+
+function refresh() {
+    fetch(API + '/api/status').then(function(r){return r.json();}).then(updateStatus).catch(function(){});
+    fetch(API + '/api/trades').then(function(r){return r.json();}).then(function(d){
+        renderOpen(d.open||[]);
+        renderClosed(d.closed||[]);
+    }).catch(function(){});
+}
+
+function clock() {
+    document.getElementById('clk').textContent = new Date().toISOString().substring(0,19) + ' UTC';
+}
+
+refresh();
+clock();
+setInterval(refresh, 8000);
+setInterval(clock, 1000);
+</script>
+</body>
+</html>

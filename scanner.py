@@ -94,6 +94,8 @@ class PolymarketScanner:
         no_dates = 0
         already_past = 0
         too_far = 0
+        not_sports = 0
+        derivative = 0
         no_fav = 0
         accepted = 0
 
@@ -108,15 +110,20 @@ class PolymarketScanner:
                 already_past += 1
             elif opp == "too_far":
                 too_far += 1
+            elif opp == "not_sports":
+                not_sports += 1
+            elif opp == "derivative":
+                derivative += 1
             else:
                 no_fav += 1
 
         # Sort by soonest resolution — fastest turnover
         opps.sort(key=lambda x: x["hours_until_resolve"])
         log.info(
-            f"Found {len(opps)} NO targets from "
-            f"{len(markets)} sports markets (within {self.max_hours}h) | "
-            f"Rejected: no_dates={no_dates} past={already_past} "
+            f"Found {len(opps)} match-winner NO targets from "
+            f"{len(markets)} markets (within {self.max_hours}h) | "
+            f"Rejected: not_sports={not_sports} derivative={derivative} "
+            f"no_dates={no_dates} past={already_past} "
             f"too_far={too_far} no_fav={no_fav}"
         )
         return opps
@@ -393,6 +400,42 @@ class PolymarketScanner:
                 or market.get("_event_title")
                 or "Unknown market"
             )
+
+            q_lower = question.lower()
+
+            # ── Reject non-sports markets (finance, politics, etc) ──
+            non_sports = [
+                "s&p", "spx", "spy", "nasdaq", "dow jones", "bitcoin",
+                "btc", "eth", "ethereum", "crypto", "stock", "index",
+                "price above", "price below", "fed ", "interest rate",
+                "election", "president", "congress", "senate",
+                "temperature", "weather", "box office", "imdb",
+                "twitter", "follower", "subscriber", "viewership",
+                "emmy", "oscar", "grammy", "golden globe",
+            ]
+            if any(kw in q_lower for kw in non_sports):
+                return "not_sports"
+
+            # ── Only match-winner markets (reject spreads, O/U, totals) ─
+            derivative_markers = [
+                "spread", "o/u ", "over/under", "over or under",
+                "total points", "total goals", "total runs",
+                "total score", "total combined",
+                "handicap", "margin", "first to score",
+                "first half", "second half", "1st half", "2nd half",
+                "first quarter", "first period", "first set",
+                "most ", "highest ", "lowest ", "exact score",
+                "both teams to score", "btts",
+                "anytime ", "player prop", "mvp",
+                "assists", "rebounds", "strikeouts",
+                "passing yards", "rushing yards", "touchdowns",
+                "hits, runs", "home runs",
+                "aces", "double faults",
+                "corners", "cards", "bookings",
+                "top ", "finish position",
+            ]
+            if any(kw in q_lower for kw in derivative_markers):
+                return "derivative"
 
             # ── Find market end / resolution date ───────────────────
             end_raw = (

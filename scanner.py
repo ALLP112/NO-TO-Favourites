@@ -130,7 +130,9 @@ class PolymarketScanner:
 
     def check_resolution(self, condition_id: str) -> tuple[bool, str]:
         """
-        Check if a market has resolved.
+        Check if a market has DEFINITIVELY resolved.
+        Only triggers when prices are at 99¢+ on one side,
+        meaning Polymarket has actually settled the market.
         Returns (resolved, result) where result is
         'yes_wins' | 'no_wins' | 'void' | 'pending'.
         """
@@ -146,49 +148,34 @@ class PolymarketScanner:
                 return (False, "pending")
 
             data = resp.json()
-            resolved = False
-            result = "pending"
 
-            if data.get("closed") or data.get("resolved"):
-                resolved = True
-                tokens = data.get("tokens", [])
-                if tokens:
-                    for tok in tokens:
-                        price = float(tok.get("price", 0))
-                        outcome = tok.get("outcome", "")
-                        if price > 0.95:
-                            result = "yes_wins" if outcome == "Yes" else "no_wins"
-                            break
-                    else:
-                        result = "void"
+            # Only resolve if the market is explicitly marked resolved
+            # AND one outcome's price is at 0.99+ (definitive settlement)
+            if not data.get("resolved"):
+                return (False, "pending")
 
-            if not resolved:
-                end_str = data.get("end_date_iso")
-                if end_str:
-                    try:
-                        end_dt = datetime.fromisoformat(
-                            end_str.replace("Z", "+00:00")
-                        )
-                        if datetime.now(timezone.utc) > end_dt:
-                            tokens = data.get("tokens", [])
-                            for tok in tokens:
-                                price = float(tok.get("price", 0))
-                                outcome = tok.get("outcome", "")
-                                if price > 0.90:
-                                    resolved = True
-                                    result = (
-                                        "yes_wins"
-                                        if outcome == "Yes"
-                                        else "no_wins"
-                                    )
-                                    break
-                    except (ValueError, TypeError):
-                        pass
+            tokens = data.get("tokens", [])
+            if not tokens:
+                return (False, "pending")
 
-            if resolved:
-                self._resolution_cache[condition_id] = (True, result)
+            for tok in tokens:
+                price = float(tok.get("price", 0))
+                outcome = tok.get("outcome", "")
+                if price >= 0.99:
+                    result = "yes_wins" if outcome == "Yes" else "no_wins"
+                    self._resolution_cache[condition_id] = (True, result)
+                    return (True, result)
 
-            return (resolved, result)
+            # Resolved but no clear winner (void / ambiguous)
+            # Check if all prices are near zero (void scenario)
+            all_low = all(float(t.get("price", 0)) < 0.10 for t in tokens)
+            if all_low:
+                self._resolution_cache[condition_id] = (True, "void")
+                return (True, "void")
+
+            # Market says resolved but prices haven't settled to 0/1 yet
+            # Wait for definitive settlement
+            return (False, "pending")
 
         except Exception as e:
             log.warning(f"Resolution check failed for {condition_id}: {e}")

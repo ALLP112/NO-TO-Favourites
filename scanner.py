@@ -226,19 +226,27 @@ class PolymarketScanner:
                     or event.get("endDateIso")
                 )
 
-                for market in event.get("markets") or []:
+                event_markets = event.get("markets") or []
+                event_title = event.get("title", "")
+                event_title_lower = event_title.lower()
+
+                # ── Detect 3-way events (soccer Win/Draw/Win) ───────
+                # If event has 3+ markets and title has "vs",
+                # find the favourite team's market and flag it
+                has_vs_event = " vs " in event_title_lower or " vs. " in event_title_lower
+                eligible_markets = []
+
+                for market in event_markets:
                     cid = market.get("conditionId") or market.get("condition_id")
                     if not cid or cid in seen_cids:
                         continue
-
                     volume = float(market.get("volume", 0) or 0)
                     if volume < self.min_volume:
                         continue
-
                     if market.get("marketType") not in (None, "binary"):
                         continue
 
-                    market["_event_title"] = event.get("title", "")
+                    market["_event_title"] = event_title
                     market["_event_start"] = (
                         market.get("startDate")
                         or market.get("start_date_iso")
@@ -252,9 +260,59 @@ class PolymarketScanner:
                     market["_event_category"] = (
                         self._safe_str(event.get("category"))
                     )
+                    eligible_markets.append(market)
 
-                    all_markets.append(market)
-                    seen_cids.add(cid)
+                # Check if this is a 3-way event
+                if has_vs_event and len(eligible_markets) >= 3:
+                    # Find the favourite team (highest YES price, skip "draw")
+                    best_yes = 0
+                    best_market = None
+                    for m in eligible_markets:
+                        q = (m.get("question") or "").lower()
+                        # Skip draw markets
+                        if "draw" in q:
+                            continue
+                        try:
+                            pr = m.get("outcomePrices") or m.get("outcome_prices")
+                            if isinstance(pr, str):
+                                pr = json.loads(pr)
+                            if pr:
+                                yes_price = float(pr[0])
+                                if yes_price > best_yes:
+                                    best_yes = yes_price
+                                    best_market = m
+                        except (ValueError, IndexError, TypeError):
+                            continue
+
+                    if best_market and best_yes > 0.05:
+                        # Flag this as a 3-way favourite market
+                        best_market["_3way_favourite"] = True
+                        best_market["_3way_fav_price"] = best_yes
+                        best_market["_3way_no_price"] = 1.0 - best_yes
+                        best_market["_3way_fav_outcome"] = (
+                            best_market.get("question")
+                            or best_market.get("_event_title")
+                            or "Unknown"
+                        )
+                        cid = best_market.get("conditionId") or best_market.get("condition_id")
+                        all_markets.append(best_market)
+                        seen_cids.add(cid)
+
+                    # Also add any 2-way markets from the same event
+                    # (spreads etc. will be filtered later)
+                    for m in eligible_markets:
+                        cid = m.get("conditionId") or m.get("condition_id")
+                        if cid not in seen_cids:
+                            q = (m.get("question") or "").lower()
+                            if " vs " in q or " vs. " in q:
+                                all_markets.append(m)
+                                seen_cids.add(cid)
+                else:
+                    # Normal 2-way markets — add them all
+                    for m in eligible_markets:
+                        cid = m.get("conditionId") or m.get("condition_id")
+                        all_markets.append(m)
+                        seen_cids.add(cid)
 
         except Exception as e:
             log.error(f"Events fetch failed: {e}")
@@ -430,12 +488,14 @@ class PolymarketScanner:
             if any(kw in q_lower for kw in non_sports):
                 return "not_sports"
 
-            # ── Must be a fixture: require "vs" in the question ─────
-            # Real match-winners: "Kings vs. Hornets", "Team A vs Team B"
-            # Non-fixtures: "Will X happen?", "Iran conflict ends?"
-            has_vs = " vs " in q_lower or " vs. " in q_lower
-            if not has_vs:
-                return "not_fixture"
+            # ── Check if this is a 3-way favourite (pre-flagged) ───
+            is_3way = market.get("_3way_favourite", False)
+
+            # ── Must be a fixture: require "vs" or be a 3-way favourite ─
+            if not is_3way:
+                has_vs = " vs " in q_lower or " vs. " in q_lower
+                if not has_vs:
+                    return "not_fixture"
 
             # ── Only match-winner markets (reject spreads, O/U, totals) ─
             derivative_markers = [
@@ -485,40 +545,51 @@ class PolymarketScanner:
 
             hours_until_resolve = hours_to_end
 
-            # ── Prices / favourite detection ────────────────────────
-            prices_raw = (
-                market.get("outcomePrices")
-                or market.get("outcome_prices")
-            )
-            outcomes_raw = market.get("outcomes")
+            # ── Favourite detection ─────────────────────────────────
+            if is_3way:
+                # 3-way market: favourite already identified at event level
+                # YES price = team's win probability, we want NO
+                fav_price   = market["_3way_fav_price"]
+                no_price    = market["_3way_no_price"]
+                fav_outcome = market["_3way_fav_outcome"]
+                volume      = float(market.get("volume", 0) or 0)
+                # Use event title as question for display
+                question    = market.get("_event_title") or question
+            else:
+                # Standard 2-way market
+                prices_raw = (
+                    market.get("outcomePrices")
+                    or market.get("outcome_prices")
+                )
+                outcomes_raw = market.get("outcomes")
 
-            if not prices_raw:
-                return "no_fav"
+                if not prices_raw:
+                    return "no_fav"
 
-            if isinstance(prices_raw, str):
-                prices_raw = json.loads(prices_raw)
-            if isinstance(outcomes_raw, str):
-                outcomes_raw = json.loads(outcomes_raw)
-            if not outcomes_raw:
-                outcomes_raw = ["Yes", "No"]
+                if isinstance(prices_raw, str):
+                    prices_raw = json.loads(prices_raw)
+                if isinstance(outcomes_raw, str):
+                    outcomes_raw = json.loads(outcomes_raw)
+                if not outcomes_raw:
+                    outcomes_raw = ["Yes", "No"]
 
-            prices = [float(p) for p in prices_raw]
-            if len(prices) < 2 or len(outcomes_raw) < 2:
-                return "no_fav"
+                prices = [float(p) for p in prices_raw]
+                if len(prices) < 2 or len(outcomes_raw) < 2:
+                    return "no_fav"
 
-            fav_idx     = 0 if prices[0] >= prices[1] else 1
-            fav_price   = prices[fav_idx]
-            fav_outcome = outcomes_raw[fav_idx]
+                fav_idx     = 0 if prices[0] >= prices[1] else 1
+                fav_price   = prices[fav_idx]
+                fav_outcome = outcomes_raw[fav_idx]
 
-            # Skip 50/50 markets — no clear favourite
-            if abs(prices[0] - prices[1]) < 0.04:
-                return "coin_flip"
+                # Skip 50/50 markets — no clear favourite
+                if abs(prices[0] - prices[1]) < 0.04:
+                    return "coin_flip"
 
-            if fav_price < self.min_fav_price or fav_price > self.max_fav_price:
-                return "no_fav"
+                if fav_price < self.min_fav_price or fav_price > self.max_fav_price:
+                    return "no_fav"
 
-            no_price = 1.0 - fav_price
-            volume   = float(market.get("volume", 0) or 0)
+                no_price = 1.0 - fav_price
+                volume   = float(market.get("volume", 0) or 0)
 
             # Detect sport/league from category or title
             sport_label = self._detect_sport(market, question)

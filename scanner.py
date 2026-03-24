@@ -90,16 +90,41 @@ class PolymarketScanner:
 
         now = datetime.now(timezone.utc)
 
+        # Diagnostic counters
+        no_end = 0
+        already_past = 0
+        too_far = 0
+        live = 0
+        no_start_heuristic = 0
+        no_fav = 0
+        accepted = 0
+
         for m in markets:
-            opp = self._evaluate_market(m, now)
-            if opp:
+            opp = self._evaluate_market_debug(m, now)
+            if isinstance(opp, dict):
                 opps.append(opp)
+                accepted += 1
+            elif opp == "no_end":
+                no_end += 1
+            elif opp == "already_past":
+                already_past += 1
+            elif opp == "too_far":
+                too_far += 1
+            elif opp == "live":
+                live += 1
+            elif opp == "no_start_heuristic":
+                no_start_heuristic += 1
+            elif opp == "no_fav":
+                no_fav += 1
 
         # Sort by soonest end time — we want fastest turnover
         opps.sort(key=lambda x: x["hours_until_resolve"])
         log.info(
             f"Found {len(opps)} pre-game NO targets from "
-            f"{len(markets)} sports markets (within {self.max_hours}h)"
+            f"{len(markets)} sports markets (within {self.max_hours}h) | "
+            f"Rejected: no_end={no_end} past={already_past} "
+            f"too_far={too_far} live={live} "
+            f"no_start={no_start_heuristic} no_fav={no_fav}"
         )
         return opps
 
@@ -230,7 +255,7 @@ class PolymarketScanner:
                         or event_end
                     )
                     market["_event_category"] = (
-                        event.get("category") or ""
+                        self._safe_str(event.get("category"))
                     )
 
                     all_markets.append(market)
@@ -238,6 +263,8 @@ class PolymarketScanner:
 
         except Exception as e:
             log.error(f"Events fetch failed: {e}")
+
+        events_count = len(all_markets)
 
         # ── Pass 2: Direct markets endpoint (fallback / extra) ──────
         try:
@@ -258,23 +285,54 @@ class PolymarketScanner:
                     cid = m.get("conditionId") or m.get("condition_id")
                     vol = float(m.get("volume", 0) or 0)
                     if cid and cid not in seen_cids and vol >= self.min_volume:
+                        if "_event_end" not in m:
+                            m["_event_end"] = (
+                                m.get("endDate")
+                                or m.get("end_date_iso")
+                                or m.get("endDateIso")
+                                or m.get("expirationDate")
+                                or m.get("game_start_time")
+                            )
+                        if "_event_start" not in m:
+                            m["_event_start"] = (
+                                m.get("startDate")
+                                or m.get("start_date_iso")
+                                or m.get("startDateIso")
+                                or m.get("gameStartTime")
+                                or m.get("game_start_time")
+                            )
+                        if "_event_title" not in m:
+                            m["_event_title"] = m.get("question", "")
                         all_markets.append(m)
                         seen_cids.add(cid)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"Markets fetch failed: {e}")
 
+        fallback_count = len(all_markets) - events_count
         log.info(
             f"Fetched {len(all_markets)} sports markets "
+            f"({events_count} from events, {fallback_count} from fallback) "
             f"with ${self.min_volume:,.0f}+ volume"
         )
         return all_markets
 
     def _is_sports_event(self, event: dict) -> bool:
         """Check whether an event is sports-related."""
-        tags = [t.lower() for t in (event.get("tags") or [])]
-        title = (event.get("title") or "").lower()
-        slug  = (event.get("slug") or "").lower()
-        category = (event.get("category") or "").lower()
+        # Tags can be strings OR dicts like {"label": "sports"}
+        raw_tags = event.get("tags") or []
+        tags = []
+        for t in raw_tags:
+            if isinstance(t, str):
+                tags.append(t.lower())
+            elif isinstance(t, dict):
+                label = t.get("label") or t.get("slug") or t.get("name") or ""
+                if isinstance(label, str):
+                    tags.append(label.lower())
+
+        # All of these can be strings, dicts, or None from the API
+        title = self._safe_str(event.get("title"))
+        slug  = self._safe_str(event.get("slug"))
+        category = self._safe_str(event.get("category"))
 
         if category in ("sports", "sport"):
             return True
@@ -299,18 +357,34 @@ class PolymarketScanner:
         except (ValueError, TypeError):
             return None
 
+    @staticmethod
+    def _safe_str(val) -> str:
+        """Safely convert an API field to lowercase string.
+        Polymarket sometimes returns dicts where you'd expect strings."""
+        if isinstance(val, str):
+            return val.lower()
+        if isinstance(val, dict):
+            # Try common dict shapes: {"label": "...", "slug": "..."}
+            for key in ("label", "slug", "name", "value"):
+                v = val.get(key)
+                if isinstance(v, str):
+                    return v.lower()
+        return ""
+
     def _evaluate_market(self, market: dict, now: datetime) -> dict | None:
+        """Wrapper for compatibility."""
+        result = self._evaluate_market_debug(market, now)
+        return result if isinstance(result, dict) else None
+
+    def _evaluate_market_debug(self, market: dict, now: datetime):
         """
-        Check if market qualifies:
-          1. Has a favourite in the 55¢–92¢ range
-          2. Resolves within max_hours
-          3. Has NOT started yet (pre-game only)
-        Returns an opportunity dict or None.
+        Check if market qualifies. Returns opportunity dict on success,
+        or a rejection reason string for diagnostics.
         """
         try:
             cid = market.get("conditionId") or market.get("condition_id")
             if not cid:
-                return None
+                return "no_cid"
 
             question = (
                 market.get("question")
@@ -323,33 +397,37 @@ class PolymarketScanner:
                 market.get("_event_end")
                 or market.get("endDate")
                 or market.get("end_date_iso")
+                or market.get("endDateIso")
+                or market.get("expirationDate")
             )
             end_dt = self._parse_dt(end_raw)
             if not end_dt:
-                return None  # No end date → can't verify timing
+                return "no_end"
 
             hours_left = (end_dt - now).total_seconds() / 3600.0
             if hours_left <= 0:
-                return None  # Already past
+                return "already_past"
             if hours_left > self.max_hours:
-                return None  # Too far out
+                return "too_far"
 
             # ── Pre-game check: reject if event has started ─────────
             start_raw = (
                 market.get("_event_start")
                 or market.get("startDate")
                 or market.get("start_date_iso")
+                or market.get("startDateIso")
+                or market.get("gameStartTime")
             )
             start_dt = self._parse_dt(start_raw)
 
             if start_dt and start_dt <= now:
-                return None  # Event has started — this is live, skip
+                return "live"
 
             # If no explicit start time, use a heuristic:
             # If end is within 3 hours and no start field, it's likely
             # live or about to be. Only accept if end is 3h+ away.
             if not start_dt and hours_left < 3.0:
-                return None
+                return "no_start_heuristic"
 
             # ── Prices / favourite detection ────────────────────────
             prices_raw = (
@@ -359,7 +437,7 @@ class PolymarketScanner:
             outcomes_raw = market.get("outcomes")
 
             if not prices_raw:
-                return None
+                return "no_fav"
 
             if isinstance(prices_raw, str):
                 prices_raw = json.loads(prices_raw)
@@ -370,14 +448,14 @@ class PolymarketScanner:
 
             prices = [float(p) for p in prices_raw]
             if len(prices) < 2 or len(outcomes_raw) < 2:
-                return None
+                return "no_fav"
 
             fav_idx     = 0 if prices[0] >= prices[1] else 1
             fav_price   = prices[fav_idx]
             fav_outcome = outcomes_raw[fav_idx]
 
             if fav_price < self.min_fav_price or fav_price > self.max_fav_price:
-                return None
+                return "no_fav"
 
             no_price = 1.0 - fav_price
             volume   = float(market.get("volume", 0) or 0)
@@ -407,7 +485,7 @@ class PolymarketScanner:
 
         except Exception as e:
             log.debug(f"Eval error: {e}")
-            return None
+            return "error"
 
     @staticmethod
     def _detect_sport(market: dict, question: str) -> str:

@@ -21,7 +21,7 @@ MAX_OPEN          = int(os.getenv("MAX_OPEN", 13))         # floor(10000/750)
 MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 100_000))
 MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))
 MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))
-MAX_HOURS         = float(os.getenv("MAX_HOURS", 24))       # only pre-game within 24h
+MAX_HOURS         = float(os.getenv("MAX_HOURS", 168))      # endDate = resolution deadline, not game time. 168h = 7 days
 SCAN_INTERVAL     = int(os.getenv("SCAN_INTERVAL", 90))     # faster cycle to fill book
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
@@ -112,7 +112,6 @@ def _open_position(opp: dict):
         "market_domain":       opp.get("sport", "Sports"),
         "market_structure":    opp.get("market_type", "binary"),
         "expected_settlement": opp.get("end_date", "unknown"),
-        "event_start":         opp.get("start_date", "unknown"),
         "hours_until_resolve": opp.get("hours_until_resolve", 0),
         "timing_confidence":   "pre-game",
         "stake":               STAKE_PER_POS,

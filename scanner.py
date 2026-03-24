@@ -91,7 +91,7 @@ class PolymarketScanner:
         now = datetime.now(timezone.utc)
 
         # Diagnostic counters
-        no_end = 0
+        no_dates = 0
         already_past = 0
         too_far = 0
         live = 0
@@ -104,8 +104,8 @@ class PolymarketScanner:
             if isinstance(opp, dict):
                 opps.append(opp)
                 accepted += 1
-            elif opp == "no_end":
-                no_end += 1
+            elif opp in ("no_end", "no_dates"):
+                no_dates += 1
             elif opp == "already_past":
                 already_past += 1
             elif opp == "too_far":
@@ -117,12 +117,12 @@ class PolymarketScanner:
             elif opp == "no_fav":
                 no_fav += 1
 
-        # Sort by soonest end time — we want fastest turnover
+        # Sort by soonest start time — we want fastest turnover
         opps.sort(key=lambda x: x["hours_until_resolve"])
         log.info(
             f"Found {len(opps)} pre-game NO targets from "
             f"{len(markets)} sports markets (within {self.max_hours}h) | "
-            f"Rejected: no_end={no_end} past={already_past} "
+            f"Rejected: no_dates={no_dates} past={already_past} "
             f"too_far={too_far} live={live} "
             f"no_start={no_start_heuristic} no_fav={no_fav}"
         )
@@ -380,6 +380,12 @@ class PolymarketScanner:
         """
         Check if market qualifies. Returns opportunity dict on success,
         or a rejection reason string for diagnostics.
+
+        TIMING LOGIC:
+          - Polymarket's endDate = market resolution deadline (often days away)
+          - startDate / gameStartTime = actual fixture kick-off
+          - We filter on GAME START, not market end
+          - Game must start within max_hours AND must not have started yet
         """
         try:
             cid = market.get("conditionId") or market.get("condition_id")
@@ -392,7 +398,18 @@ class PolymarketScanner:
                 or "Unknown market"
             )
 
-            # ── Parse end date — must resolve within max_hours ──────
+            # ── Find game start time ────────────────────────────────
+            start_raw = (
+                market.get("_event_start")
+                or market.get("startDate")
+                or market.get("start_date_iso")
+                or market.get("startDateIso")
+                or market.get("gameStartTime")
+                or market.get("game_start_time")
+            )
+            start_dt = self._parse_dt(start_raw)
+
+            # ── Find market end/resolution date (used as fallback) ──
             end_raw = (
                 market.get("_event_end")
                 or market.get("endDate")
@@ -401,33 +418,33 @@ class PolymarketScanner:
                 or market.get("expirationDate")
             )
             end_dt = self._parse_dt(end_raw)
-            if not end_dt:
-                return "no_end"
 
-            hours_left = (end_dt - now).total_seconds() / 3600.0
-            if hours_left <= 0:
-                return "already_past"
-            if hours_left > self.max_hours:
-                return "too_far"
+            # ── Timing filter ───────────────────────────────────────
+            if start_dt:
+                # We have a game start time — use it directly
+                if start_dt <= now:
+                    return "live"  # game has started, skip
 
-            # ── Pre-game check: reject if event has started ─────────
-            start_raw = (
-                market.get("_event_start")
-                or market.get("startDate")
-                or market.get("start_date_iso")
-                or market.get("startDateIso")
-                or market.get("gameStartTime")
-            )
-            start_dt = self._parse_dt(start_raw)
+                hours_to_start = (start_dt - now).total_seconds() / 3600.0
+                if hours_to_start > self.max_hours:
+                    return "too_far"  # game too far out
 
-            if start_dt and start_dt <= now:
-                return "live"
-
-            # If no explicit start time, use a heuristic:
-            # If end is within 3 hours and no start field, it's likely
-            # live or about to be. Only accept if end is 3h+ away.
-            if not start_dt and hours_left < 3.0:
-                return "no_start_heuristic"
+                hours_until_resolve = hours_to_start  # approximate
+            elif end_dt:
+                # No start time — fall back to end date with caution
+                hours_to_end = (end_dt - now).total_seconds() / 3600.0
+                if hours_to_end <= 0:
+                    return "already_past"
+                # Without a start time, end date could be the resolution
+                # deadline days away. Accept if end is within max_hours,
+                # but reject very short windows (likely already live)
+                if hours_to_end > self.max_hours:
+                    return "too_far"
+                if hours_to_end < 3.0:
+                    return "no_start_heuristic"  # probably live
+                hours_until_resolve = hours_to_end
+            else:
+                return "no_dates"  # can't verify timing at all
 
             # ── Prices / favourite detection ────────────────────────
             prices_raw = (
@@ -472,13 +489,13 @@ class PolymarketScanner:
                 "volume":               volume,
                 "end_date":             end_raw[:16] if end_raw else "unknown",
                 "start_date":           start_raw[:16] if start_raw else "unknown",
-                "hours_until_resolve":  round(hours_left, 1),
+                "hours_until_resolve":  round(hours_until_resolve, 1),
                 "market_type":          "binary",
                 "sport":                sport_label,
                 "driver": (
                     f"Favourite '{fav_outcome}' at {fav_price:.0%}. "
                     f"NO shares at {no_price:.0%}. "
-                    f"Resolves in {hours_left:.1f}h. "
+                    f"Starts in {hours_until_resolve:.1f}h. "
                     f"Volume ${volume:,.0f}."
                 ),
             }

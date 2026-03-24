@@ -19,8 +19,8 @@ BANKROLL          = float(os.getenv("BANKROLL", 10_000))
 STAKE_PER_POS     = float(os.getenv("STAKE_PER_POS", 400))
 MAX_OPEN          = int(os.getenv("MAX_OPEN", 25))         # floor(10000/400)
 MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 30_000))
-MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))
-MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))
+MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.95))
+MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.05))
 MAX_HOURS         = float(os.getenv("MAX_HOURS", 168))      # endDate = resolution deadline, not game time. 168h = 7 days
 MIN_HOURS         = float(os.getenv("MIN_HOURS", 3))        # skip markets resolving too soon (likely live)
 SCAN_INTERVAL     = int(os.getenv("SCAN_INTERVAL", 90))     # faster cycle to fill book

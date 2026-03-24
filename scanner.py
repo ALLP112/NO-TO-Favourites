@@ -98,6 +98,7 @@ class PolymarketScanner:
         too_soon = 0
         too_far = 0
         not_sports = 0
+        not_fixture = 0
         derivative = 0
         no_fav = 0
         accepted = 0
@@ -117,6 +118,8 @@ class PolymarketScanner:
                 too_far += 1
             elif opp == "not_sports":
                 not_sports += 1
+            elif opp == "not_fixture":
+                not_fixture += 1
             elif opp == "derivative":
                 derivative += 1
             else:
@@ -125,10 +128,10 @@ class PolymarketScanner:
         # Sort by soonest resolution — fastest turnover
         opps.sort(key=lambda x: x["hours_until_resolve"])
         log.info(
-            f"Found {len(opps)} match-winner NO targets from "
+            f"Found {len(opps)} fixture NO targets from "
             f"{len(markets)} markets ({self.min_hours}h-{self.max_hours}h) | "
-            f"Rejected: not_sports={not_sports} derivative={derivative} "
-            f"no_dates={no_dates} past={already_past} "
+            f"Rejected: not_sports={not_sports} no_vs={not_fixture} "
+            f"derivative={derivative} no_dates={no_dates} past={already_past} "
             f"too_soon={too_soon} too_far={too_far} no_fav={no_fav}"
         )
         return opps
@@ -395,18 +398,44 @@ class PolymarketScanner:
 
             q_lower = question.lower()
 
-            # ── Reject non-sports markets (finance, politics, etc) ──
+            # ── Reject non-sports markets (finance, politics, geo, etc) ──
             non_sports = [
+                # Finance / crypto
                 "s&p", "spx", "spy", "nasdaq", "dow jones", "bitcoin",
                 "btc", "eth", "ethereum", "crypto", "stock", "index",
                 "price above", "price below", "fed ", "interest rate",
+                "crude oil", "gold price", "silver price", "oil price",
+                "treasury", "inflation", "gdp", "recession",
+                # Politics / geopolitics
                 "election", "president", "congress", "senate",
+                "iran", "israel", "ukraine", "russia", "china",
+                "war ", "conflict", "invasion", "forces enter",
+                "ceasefire", "peace deal", "sanctions",
+                "trump", "biden", "tariff",
+                "democrat", "republican", "parliament",
+                # Entertainment / media
                 "temperature", "weather", "box office", "imdb",
                 "twitter", "follower", "subscriber", "viewership",
                 "emmy", "oscar", "grammy", "golden globe",
+                "tiktok", "youtube", "netflix", "spotify",
+                # Generic non-fixture patterns
+                "by end of", "by march", "by april", "by may",
+                "by june", "by july", "by august", "by september",
+                "by october", "by november", "by december", "by january",
+                "by february", "before ", "by the end",
+                "hit $", "reach $", "above $", "below $",
+                "will the ", "will there", "will any",
+                "how many", "more than", "less than", "at least",
             ]
             if any(kw in q_lower for kw in non_sports):
                 return "not_sports"
+
+            # ── Must be a fixture: require "vs" in the question ─────
+            # Real match-winners: "Kings vs. Hornets", "Team A vs Team B"
+            # Non-fixtures: "Will X happen?", "Iran conflict ends?"
+            has_vs = " vs " in q_lower or " vs. " in q_lower
+            if not has_vs:
+                return "not_fixture"
 
             # ── Only match-winner markets (reject spreads, O/U, totals) ─
             derivative_markers = [
@@ -425,6 +454,8 @@ class PolymarketScanner:
                 "aces", "double faults",
                 "corners", "cards", "bookings",
                 "top ", "finish position",
+                "game 1 winner", "game 2 winner", "game 3 winner",
+                "map 1", "map 2", "map 3",
             ]
             if any(kw in q_lower for kw in derivative_markers):
                 return "derivative"

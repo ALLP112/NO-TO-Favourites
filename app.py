@@ -22,6 +22,7 @@ MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 100_000))
 MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))
 MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))
 MAX_HOURS         = float(os.getenv("MAX_HOURS", 168))      # endDate = resolution deadline, not game time. 168h = 7 days
+MIN_HOURS         = float(os.getenv("MIN_HOURS", 3))        # skip markets resolving too soon (likely live)
 SCAN_INTERVAL     = int(os.getenv("SCAN_INTERVAL", 90))     # faster cycle to fill book
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
@@ -64,6 +65,7 @@ scanner = PolymarketScanner(
     min_fav_price=MIN_FAV_PRICE,
     max_fav_price=MAX_FAV_PRICE,
     max_hours_until_resolve=MAX_HOURS,
+    min_hours_until_resolve=MIN_HOURS,
 )
 
 lock = threading.Lock()

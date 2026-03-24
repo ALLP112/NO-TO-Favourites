@@ -68,8 +68,8 @@ class PolymarketScanner:
     def __init__(
         self,
         min_volume: float = 30_000,
-        min_fav_price: float = 0.55,
-        max_fav_price: float = 0.92,
+        min_fav_price: float = 0.05,
+        max_fav_price: float = 0.95,
         max_hours_until_resolve: float = 168.0,
         min_hours_until_resolve: float = 3.0,
     ):
@@ -509,6 +509,10 @@ class PolymarketScanner:
             fav_idx     = 0 if prices[0] >= prices[1] else 1
             fav_price   = prices[fav_idx]
             fav_outcome = outcomes_raw[fav_idx]
+
+            # Skip 50/50 markets — no clear favourite
+            if abs(prices[0] - prices[1]) < 0.04:
+                return "coin_flip"
 
             if fav_price < self.min_fav_price or fav_price > self.max_fav_price:
                 return "no_fav"

@@ -1,11 +1,11 @@
 """
-EdgeBot – Polymarket NO-on-Favourites Scanner
-Bets NO against the favourite in sports markets with $100k+ volume.
+EdgeBot – NO-TO-Favourites
+Mechanically buys NO on the favourite in pre-game sports markets
+on Polymarket. Targets full bankroll deployment across all slots.
 Paper trading mode. Deploys on Render.
 """
 
 import os
-import json
 import time
 import threading
 import logging
@@ -17,11 +17,12 @@ from scanner import PolymarketScanner
 # ── Config ──────────────────────────────────────────────────────────────────
 BANKROLL          = float(os.getenv("BANKROLL", 10_000))
 STAKE_PER_POS     = float(os.getenv("STAKE_PER_POS", 750))
-MAX_OPEN          = int(os.getenv("MAX_OPEN", 13))        # floor(10000/750)
+MAX_OPEN          = int(os.getenv("MAX_OPEN", 13))         # floor(10000/750)
 MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 100_000))
-SCAN_INTERVAL     = int(os.getenv("SCAN_INTERVAL", 120))  # seconds
-MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))  # don't short near-certs
-MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))  # must actually be a fav
+MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.92))
+MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.55))
+MAX_HOURS         = float(os.getenv("MAX_HOURS", 24))       # only pre-game within 24h
+SCAN_INTERVAL     = int(os.getenv("SCAN_INTERVAL", 90))     # faster cycle to fill book
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
 log = logging.getLogger("edgebot")
@@ -55,12 +56,14 @@ settings = {
     "max_open_positions":      MAX_OPEN,
     "min_volume":              MIN_VOLUME,
     "scan_interval_sec":       SCAN_INTERVAL,
+    "max_hours":               MAX_HOURS,
 }
 
 scanner = PolymarketScanner(
     min_volume=MIN_VOLUME,
     min_fav_price=MIN_FAV_PRICE,
     max_fav_price=MAX_FAV_PRICE,
+    max_hours_until_resolve=MAX_HOURS,
 )
 
 lock = threading.Lock()
@@ -79,6 +82,13 @@ def _can_open():
     )
 
 
+def _slots_free():
+    """How many more positions can we open."""
+    by_bankroll = int(state["free_bankroll"] // STAKE_PER_POS)
+    by_slots    = MAX_OPEN - len(state["open_trades"])
+    return min(by_bankroll, by_slots)
+
+
 def _already_in(condition_id: str) -> bool:
     for t in state["open_trades"]:
         if t["condition_id"] == condition_id:
@@ -91,24 +101,26 @@ def _already_in(condition_id: str) -> bool:
 
 def _open_position(opp: dict):
     """Paper-open a NO position on the favourite."""
-    no_price = 1.0 - opp["fav_price"]          # price of NO share
-    shares   = STAKE_PER_POS / no_price         # how many NO shares we get
-    payout   = shares                           # each NO share pays $1 if fav loses
-    profit_if_win = payout - STAKE_PER_POS
+    no_price = opp["no_price"]
+    shares   = STAKE_PER_POS / no_price
+    profit_if_win = shares - STAKE_PER_POS   # each NO share pays $1
 
     trade = {
         "condition_id":        opp["condition_id"],
         "market_question":     opp["question"],
         "selection":           f"NO on {opp['fav_outcome']}",
-        "market_domain":       "sports",
+        "market_domain":       opp.get("sport", "Sports"),
         "market_structure":    opp.get("market_type", "binary"),
         "expected_settlement": opp.get("end_date", "unknown"),
-        "timing_confidence":   "medium",
+        "event_start":         opp.get("start_date", "unknown"),
+        "hours_until_resolve": opp.get("hours_until_resolve", 0),
+        "timing_confidence":   "pre-game",
         "stake":               STAKE_PER_POS,
         "price":               no_price,
-        "expected_hold_hours": opp.get("hold_hours", 24),
+        "expected_hold_hours": opp.get("hours_until_resolve", 24),
         "key_driver":          opp.get("driver", ""),
         "fav_price":           opp["fav_price"],
+        "fav_outcome":         opp["fav_outcome"],
         "volume":              opp["volume"],
         "shares":              shares,
         "potential_profit":    profit_if_win,
@@ -122,8 +134,14 @@ def _open_position(opp: dict):
     state["allocated_bankroll"] += STAKE_PER_POS
     state["free_bankroll"]      -= STAKE_PER_POS
     state["last_trade"]          = _now()
-    log.info(f"OPENED  NO on '{opp['fav_outcome']}' | {opp['question'][:60]} | "
-             f"NO@{no_price:.2f} | vol ${opp['volume']:,.0f}")
+
+    log.info(
+        f"OPENED  NO on '{opp['fav_outcome']}' | "
+        f"{opp['sport']} | {opp['question'][:50]} | "
+        f"NO@{no_price:.2f} | resolves {opp['hours_until_resolve']:.1f}h | "
+        f"vol ${opp['volume']:,.0f} | "
+        f"slots {state['open_positions_count']}/{MAX_OPEN}"
+    )
 
 
 def _check_resolutions():
@@ -151,8 +169,12 @@ def _check_resolutions():
             state["allocated_bankroll"] -= t["stake"]
             state["free_bankroll"]      += t["stake"] + t["profit"]
             state["closed_trades"].insert(0, t)
-            log.info(f"CLOSED  {t['result'].upper()} | {t['market_question'][:50]} | "
-                     f"P&L ${t['profit']:+,.0f}")
+            log.info(
+                f"CLOSED  {t['result'].upper()} | "
+                f"{t['market_question'][:50]} | "
+                f"P&L ${t['profit']:+,.0f} | "
+                f"cumulative ${state['pnl']['total']:+,.0f}"
+            )
         else:
             still_open.append(t)
 
@@ -164,22 +186,28 @@ def _check_resolutions():
 def _scan_loop():
     while state["running"]:
         try:
-            state["current_step"] = "scanning markets"
+            state["current_step"] = "checking resolutions"
             state["error"] = None
 
-            # 1. Check resolutions on open positions
+            # 1. Always check resolutions first — free up slots
             if state["open_trades"]:
-                state["current_step"] = "checking resolutions"
                 _check_resolutions()
 
-            # 2. Find new opportunities
-            if _can_open():
-                state["current_step"] = "fetching sports markets"
+            # 2. Try to fill empty slots
+            slots = _slots_free()
+            if slots > 0:
+                state["current_step"] = (
+                    f"scanning — {slots} slots to fill "
+                    f"(${state['free_bankroll']:,.0f} free)"
+                )
                 opportunities = scanner.find_no_opportunities()
                 state["scan_count"] += 1
                 state["last_scan"] = _now()
 
-                state["current_step"] = f"evaluating {len(opportunities)} candidates"
+                filled = 0
+                state["current_step"] = (
+                    f"found {len(opportunities)} candidates — filling"
+                )
                 for opp in opportunities:
                     if not _can_open():
                         break
@@ -187,19 +215,42 @@ def _scan_loop():
                         continue
                     with lock:
                         _open_position(opp)
+                        filled += 1
+
+                if filled > 0:
+                    state["current_step"] = (
+                        f"filled {filled} slots — "
+                        f"{state['open_positions_count']}/{MAX_OPEN} open"
+                    )
+                elif len(opportunities) == 0:
+                    state["current_step"] = (
+                        f"no qualifying pre-game markets — "
+                        f"{state['open_positions_count']}/{MAX_OPEN} open"
+                    )
+                else:
+                    state["current_step"] = (
+                        f"all candidates already held — "
+                        f"{state['open_positions_count']}/{MAX_OPEN} open"
+                    )
             else:
                 state["scan_count"] += 1
                 state["last_scan"] = _now()
-                state["current_step"] = "at capacity – waiting"
+                state["current_step"] = (
+                    f"fully deployed ${state['allocated_bankroll']:,.0f} — "
+                    f"{state['open_positions_count']}/{MAX_OPEN} open"
+                )
 
-            state["current_step"] = f"sleeping {SCAN_INTERVAL}s"
+            # Shorter sleep when we have empty slots (aggressive fill)
+            sleep_secs = SCAN_INTERVAL if _slots_free() == 0 else min(SCAN_INTERVAL, 45)
+            state["current_step"] += f" · next scan {sleep_secs}s"
+
         except Exception as e:
             state["error"] = str(e)
             state["current_step"] = "error – retrying"
             log.exception("Scan error")
+            sleep_secs = SCAN_INTERVAL
 
-        # Sleep in 1s chunks so stop is responsive
-        for _ in range(SCAN_INTERVAL):
+        for _ in range(sleep_secs):
             if not state["running"]:
                 break
             time.sleep(1)

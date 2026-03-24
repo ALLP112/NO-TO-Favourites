@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EdgeBot · NO on Favourites</title>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.7/chart.umd.min.js"></script>
     <style>
         :root {
             --bg: #07070c;
@@ -201,6 +202,52 @@
             margin-top: .1rem;
         }
 
+        /* ── P&L Chart ─────────────────────────────────────── */
+        .chart-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem;
+            margin-bottom: 1.25rem;
+            position: relative;
+        }
+        .chart-hd {
+            font-size: .62rem;
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            color: var(--dim);
+            margin-bottom: .75rem;
+        }
+        .chart-wrap {
+            position: relative;
+            height: 260px;
+        }
+        .chart-stats {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: .85rem;
+            padding-top: .75rem;
+            border-top: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+        .chart-stat .cv { font-size: .95rem; font-weight: 700; }
+        .chart-stat .cl {
+            font-size: .48rem;
+            color: var(--dim2);
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            margin-top: .1rem;
+        }
+        .chart-empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 260px;
+            color: var(--dim2);
+            font-size: .78rem;
+        }
+
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -393,6 +440,8 @@
             .grid { grid-template-columns: repeat(3, 1fr); }
             .open-grid { grid-template-columns: 1fr; }
             .pnl-row { gap: 1.5rem; }
+            .chart-wrap { height: 200px; }
+            .chart-stats { gap: 1rem; }
         }
     </style>
 </head>
@@ -428,6 +477,7 @@
         <button class="btn-go" onclick="doStart()">▶ START SCANNER</button>
     </div>
 
+    <!-- P&L hero number -->
     <div class="pnl-box mono">
         <div class="pnl-num zero" id="pnlNum">$0.00</div>
         <div class="pnl-label">Paper P&amp;L</div>
@@ -436,6 +486,22 @@
             <div class="pnl-stat"><div class="v" id="pLosses" style="color:var(--red)">0</div><div class="l">Losses</div></div>
             <div class="pnl-stat"><div class="v" id="pTotal" style="color:var(--blue)">0</div><div class="l">Total trades</div></div>
             <div class="pnl-stat"><div class="v" id="pWinRate" style="color:var(--yellow)">0%</div><div class="l">Win rate</div></div>
+        </div>
+    </div>
+
+    <!-- P&L Chart -->
+    <div class="chart-box mono">
+        <div class="chart-hd">Cumulative P&L</div>
+        <div class="chart-wrap" id="chartWrap">
+            <canvas id="pnlChart"></canvas>
+        </div>
+        <div class="chart-empty" id="chartEmpty">Waiting for closed trades to plot...</div>
+        <div class="chart-stats" id="chartStats" style="display:none">
+            <div class="chart-stat" style="text-align:center"><div class="cv" id="csPnl" style="color:var(--dim)">$0</div><div class="cl">Total P&L</div></div>
+            <div class="chart-stat" style="text-align:center"><div class="cv" id="csWinRate" style="color:var(--yellow)">0%</div><div class="cl">Win Rate</div></div>
+            <div class="chart-stat" style="text-align:center"><div class="cv" id="csDrawdown" style="color:var(--red)">$0</div><div class="cl">Max Drawdown</div></div>
+            <div class="chart-stat" style="text-align:center"><div class="cv" id="csAvgProfit" style="color:var(--blue)">$0</div><div class="cl">Average Profit</div></div>
+            <div class="chart-stat" style="text-align:center"><div class="cv" id="csSharpe" style="color:var(--orange)">0.00</div><div class="cl">Sharpe Ratio</div></div>
         </div>
     </div>
 
@@ -468,7 +534,8 @@
 </div>
 
 <script>
-const API = window.location.origin;
+var API = window.location.origin;
+var pnlChart = null;
 
 function fmt(n) { return Math.round(n).toLocaleString('en-US'); }
 function fmt2(n) { return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
@@ -536,6 +603,229 @@ function updateStatus(d) {
     }
 }
 
+/* ── P&L Chart ─────────────────────────────────────────────────────── */
+function buildPnlChart(closedTrades) {
+    var canvas = document.getElementById('pnlChart');
+    var emptyMsg = document.getElementById('chartEmpty');
+    var statsRow = document.getElementById('chartStats');
+
+    if (!closedTrades || closedTrades.length === 0) {
+        canvas.style.display = 'none';
+        emptyMsg.style.display = 'flex';
+        statsRow.style.display = 'none';
+        return;
+    }
+
+    canvas.style.display = 'block';
+    emptyMsg.style.display = 'none';
+    statsRow.style.display = 'flex';
+
+    // Closed trades come in reverse chronological — reverse to get chronological
+    var trades = closedTrades.slice().reverse();
+
+    // Build cumulative P&L starting from 0
+    var labels = ['Start'];
+    var cumData = [0];
+    var profits = [];
+    var running = 0;
+    var wins = 0;
+
+    for (var i = 0; i < trades.length; i++) {
+        var t = trades[i];
+        var profit = t.profit || 0;
+        running += profit;
+        profits.push(profit);
+        if (profit > 0) wins++;
+        labels.push('#' + (i + 1));
+        cumData.push(running);
+    }
+
+    // ── Compute stats ──────────────────────────────────────
+    var totalPnl = running;
+    var winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0;
+
+    // Max drawdown
+    var peak = 0;
+    var maxDD = 0;
+    for (var j = 0; j < cumData.length; j++) {
+        if (cumData[j] > peak) peak = cumData[j];
+        var dd = peak - cumData[j];
+        if (dd > maxDD) maxDD = dd;
+    }
+
+    // Average profit per trade
+    var avgProfit = trades.length > 0 ? totalPnl / trades.length : 0;
+
+    // Sharpe ratio (using per-trade returns, annualised assuming ~1 trade/day)
+    var sharpe = 0;
+    if (profits.length > 1) {
+        var mean = totalPnl / profits.length;
+        var variance = 0;
+        for (var k = 0; k < profits.length; k++) {
+            variance += (profits[k] - mean) * (profits[k] - mean);
+        }
+        var stdev = Math.sqrt(variance / (profits.length - 1));
+        if (stdev > 0) {
+            sharpe = (mean / stdev) * Math.sqrt(365);
+        }
+    }
+
+    // Update stat displays
+    var pnlEl = document.getElementById('csPnl');
+    pnlEl.textContent = (totalPnl >= 0 ? '+$' : '-$') + fmt(Math.abs(totalPnl));
+    pnlEl.style.color = totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    document.getElementById('csWinRate').textContent = Math.round(winRate) + '%';
+
+    document.getElementById('csDrawdown').textContent = '-$' + fmt(maxDD);
+
+    var avgEl = document.getElementById('csAvgProfit');
+    avgEl.textContent = (avgProfit >= 0 ? '+$' : '-$') + fmt(Math.abs(avgProfit));
+    avgEl.style.color = avgProfit >= 0 ? 'var(--green)' : 'var(--red)';
+
+    var sharpeEl = document.getElementById('csSharpe');
+    sharpeEl.textContent = sharpe.toFixed(2);
+    sharpeEl.style.color = sharpe >= 1 ? 'var(--green)' : sharpe >= 0 ? 'var(--orange)' : 'var(--red)';
+
+    // ── Build / update chart ───────────────────────────────
+    // Determine line colour based on final P&L
+    var lineColor = totalPnl >= 0 ? '#00ff88' : '#ff4466';
+    var fillColor = totalPnl >= 0 ? 'rgba(0,255,136,.08)' : 'rgba(255,68,102,.08)';
+
+    // Segment colours: green when going up, red when going down
+    var segmentColors = [];
+    for (var s = 1; s < cumData.length; s++) {
+        segmentColors.push(cumData[s] >= cumData[s-1] ? '#00ff88' : '#ff4466');
+    }
+
+    if (pnlChart) {
+        pnlChart.data.labels = labels;
+        pnlChart.data.datasets[0].data = cumData;
+        pnlChart.data.datasets[0].segment = {
+            borderColor: function(ctx) {
+                return segmentColors[ctx.p0DataIndex] || lineColor;
+            }
+        };
+        pnlChart.data.datasets[0].backgroundColor = fillColor;
+        pnlChart.update('none');
+    } else {
+        var ctx = canvas.getContext('2d');
+        pnlChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: cumData,
+                    borderWidth: 2,
+                    pointRadius: function(ctx) {
+                        return ctx.dataIndex === 0 ? 0 : 3;
+                    },
+                    pointBackgroundColor: function(ctx) {
+                        if (ctx.dataIndex === 0) return 'transparent';
+                        var val = cumData[ctx.dataIndex];
+                        var prev = cumData[ctx.dataIndex - 1];
+                        return val >= prev ? '#00ff88' : '#ff4466';
+                    },
+                    pointBorderColor: 'transparent',
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#fff',
+                    fill: true,
+                    backgroundColor: fillColor,
+                    tension: 0.25,
+                    segment: {
+                        borderColor: function(ctx) {
+                            return segmentColors[ctx.p0DataIndex] || lineColor;
+                        }
+                    }
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: { padding: { top: 8, right: 12, bottom: 4, left: 8 } },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1c1c28',
+                        borderColor: '#353548',
+                        borderWidth: 1,
+                        titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+                        bodyFont: { family: "'JetBrains Mono', monospace", size: 12, weight: '700' },
+                        titleColor: '#7a7a95',
+                        bodyColor: '#e2e2ef',
+                        padding: 10,
+                        displayColors: false,
+                        callbacks: {
+                            title: function(items) {
+                                if (items[0].dataIndex === 0) return 'Start';
+                                return 'Trade ' + items[0].dataIndex;
+                            },
+                            label: function(item) {
+                                var v = item.parsed.y;
+                                return (v >= 0 ? '+$' : '-$') + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(37,37,53,.5)', lineWidth: 0.5 },
+                        ticks: {
+                            font: { family: "'JetBrains Mono', monospace", size: 10 },
+                            color: '#55556a',
+                            maxRotation: 0
+                        },
+                        border: { color: 'rgba(37,37,53,.5)' }
+                    },
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: 'rgba(37,37,53,.5)', lineWidth: 0.5 },
+                        ticks: {
+                            font: { family: "'JetBrains Mono', monospace", size: 10 },
+                            color: '#55556a',
+                            callback: function(v) {
+                                return (v >= 0 ? '$' : '-$') + Math.abs(v).toLocaleString();
+                            }
+                        },
+                        border: { color: 'rgba(37,37,53,.5)' }
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                animation: {
+                    duration: 600,
+                    easing: 'easeOutQuart'
+                }
+            }
+        });
+
+        // Draw zero line plugin
+        var zeroLinePlugin = {
+            id: 'zeroLine',
+            afterDraw: function(chart) {
+                var yScale = chart.scales.y;
+                var ctx2 = chart.ctx;
+                var yPos = yScale.getPixelForValue(0);
+                if (yPos >= chart.chartArea.top && yPos <= chart.chartArea.bottom) {
+                    ctx2.save();
+                    ctx2.beginPath();
+                    ctx2.setLineDash([4, 4]);
+                    ctx2.strokeStyle = 'rgba(122,122,149,.35)';
+                    ctx2.lineWidth = 1;
+                    ctx2.moveTo(chart.chartArea.left, yPos);
+                    ctx2.lineTo(chart.chartArea.right, yPos);
+                    ctx2.stroke();
+                    ctx2.restore();
+                }
+            }
+        };
+        Chart.register(zeroLinePlugin);
+        pnlChart.update();
+    }
+}
+
 function renderOpen(trades) {
     var grid = document.getElementById('openGrid');
     if (!trades || trades.length === 0) { grid.innerHTML = ''; return; }
@@ -591,6 +881,7 @@ function refresh() {
     fetch(API + '/api/trades').then(function(r){return r.json();}).then(function(d){
         renderOpen(d.open||[]);
         renderClosed(d.closed||[]);
+        buildPnlChart(d.closed||[]);
     }).catch(function(){});
 }
 

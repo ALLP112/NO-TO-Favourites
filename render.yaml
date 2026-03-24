@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: edgebot
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4
+    envVars:
+      - key: BANKROLL
+        value: "10000"
+      - key: STAKE_PER_POS
+        value: "750"
+      - key: MIN_VOLUME
+        value: "100000"
+      - key: SCAN_INTERVAL
+        value: "120"
+      - key: MIN_EDGE_PP
+        value: "3.0"
+      - key: MIN_FAV_PRICE
+        value: "0.55"
+      - key: MAX_FAV_PRICE
+        value: "0.92"

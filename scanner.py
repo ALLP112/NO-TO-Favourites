@@ -70,12 +70,14 @@ class PolymarketScanner:
         min_volume: float = 100_000,
         min_fav_price: float = 0.55,
         max_fav_price: float = 0.92,
-        max_hours_until_resolve: float = 24.0,
+        max_hours_until_resolve: float = 168.0,
+        min_hours_until_resolve: float = 3.0,
     ):
         self.min_volume    = min_volume
         self.min_fav_price = min_fav_price
         self.max_fav_price = max_fav_price
         self.max_hours     = max_hours_until_resolve
+        self.min_hours     = min_hours_until_resolve
         self._resolution_cache: dict[str, tuple[bool, str]] = {}
 
     # ── Public ──────────────────────────────────────────────────────────
@@ -93,6 +95,7 @@ class PolymarketScanner:
         # Diagnostic counters
         no_dates = 0
         already_past = 0
+        too_soon = 0
         too_far = 0
         not_sports = 0
         derivative = 0
@@ -108,6 +111,8 @@ class PolymarketScanner:
                 no_dates += 1
             elif opp == "already_past":
                 already_past += 1
+            elif opp == "too_soon":
+                too_soon += 1
             elif opp == "too_far":
                 too_far += 1
             elif opp == "not_sports":
@@ -121,10 +126,10 @@ class PolymarketScanner:
         opps.sort(key=lambda x: x["hours_until_resolve"])
         log.info(
             f"Found {len(opps)} match-winner NO targets from "
-            f"{len(markets)} markets (within {self.max_hours}h) | "
+            f"{len(markets)} markets ({self.min_hours}h-{self.max_hours}h) | "
             f"Rejected: not_sports={not_sports} derivative={derivative} "
             f"no_dates={no_dates} past={already_past} "
-            f"too_far={too_far} no_fav={no_fav}"
+            f"too_soon={too_soon} too_far={too_far} no_fav={no_fav}"
         )
         return opps
 
@@ -440,6 +445,9 @@ class PolymarketScanner:
 
             if hours_to_end <= 0:
                 return "already_past"  # already resolved
+
+            if hours_to_end < self.min_hours:
+                return "too_soon"  # likely live or in-play
 
             if hours_to_end > self.max_hours:
                 return "too_far"  # resolves too far out

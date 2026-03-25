@@ -148,9 +148,13 @@ def _open_position(opp: dict):
 def _check_resolutions():
     """Check if any open positions have resolved."""
     still_open = []
+    checked = 0
+    resolved_count = 0
     for t in state["open_trades"]:
+        checked += 1
         resolved, result = scanner.check_resolution(t["condition_id"])
         if resolved:
+            resolved_count += 1
             if result == "no_wins":
                 t["result"] = "win"
                 t["profit"] = t["potential_profit"]
@@ -181,6 +185,8 @@ def _check_resolutions():
 
     state["open_trades"] = still_open
     state["open_positions_count"] = len(still_open)
+    if checked > 0:
+        log.info(f"Resolution check: {checked} checked, {resolved_count} resolved, {len(still_open)} still open")
 
 
 # ── Scan loop ───────────────────────────────────────────────────────────────

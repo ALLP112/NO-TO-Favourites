@@ -139,55 +139,108 @@ class PolymarketScanner:
     def check_resolution(self, condition_id: str) -> tuple[bool, str]:
         """
         Check if a market has DEFINITIVELY resolved.
-        Only triggers when prices are at 99¢+ on one side,
-        meaning Polymarket has actually settled the market.
+        Tries Gamma API first (more reliable), then CLOB API as fallback.
         Returns (resolved, result) where result is
         'yes_wins' | 'no_wins' | 'void' | 'pending'.
         """
         if condition_id in self._resolution_cache:
             return self._resolution_cache[condition_id]
 
+        # ── Try Gamma API first ─────────────────────────────────
+        try:
+            # Try path format first, then query parameter format
+            resp = requests.get(
+                f"{GAMMA_API}/markets/{condition_id}",
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                resp = requests.get(
+                    f"{GAMMA_API}/markets",
+                    params={"id": condition_id},
+                    timeout=15,
+                )
+            if resp.status_code == 200:
+                raw = resp.json()
+                # Query param format returns a list, path format returns an object
+                if isinstance(raw, list):
+                    data = raw[0] if raw else {}
+                else:
+                    data = raw
+
+                # Check multiple resolution indicators
+                # API may return booleans or strings
+                closed = str(data.get("closed", "")).lower() in ("true", "1", "yes")
+                resolved = str(data.get("resolved", "")).lower() in ("true", "1", "yes")
+                active = str(data.get("active", "true")).lower() in ("true", "1", "yes")
+
+                # Market must be closed/resolved and no longer active
+                if closed or resolved or not active:
+                    # Check outcome prices for definitive settlement
+                    prices_raw = data.get("outcomePrices") or data.get("outcome_prices")
+                    outcomes_raw = data.get("outcomes")
+
+                    if prices_raw:
+                        if isinstance(prices_raw, str):
+                            prices_raw = json.loads(prices_raw)
+                        if isinstance(outcomes_raw, str):
+                            outcomes_raw = json.loads(outcomes_raw)
+                        if not outcomes_raw:
+                            outcomes_raw = ["Yes", "No"]
+
+                        prices = [float(p) for p in prices_raw]
+
+                        # Check for definitive settlement (one side at 95%+)
+                        for i, price in enumerate(prices):
+                            if price >= 0.95:
+                                outcome = outcomes_raw[i] if i < len(outcomes_raw) else "Yes"
+                                result = "yes_wins" if outcome == "Yes" else "no_wins"
+                                log.info(f"RESOLVED via Gamma: {condition_id[:12]} → {result} (price={price:.2f})")
+                                self._resolution_cache[condition_id] = (True, result)
+                                return (True, result)
+
+                        # All prices near zero = void
+                        if all(p < 0.05 for p in prices):
+                            log.info(f"RESOLVED via Gamma: {condition_id[:12]} → void")
+                            self._resolution_cache[condition_id] = (True, "void")
+                            return (True, "void")
+
+                        # Closed but prices haven't settled — check if
+                        # one side is clearly dominant (>85%)
+                        for i, price in enumerate(prices):
+                            if price >= 0.85 and (closed or resolved):
+                                outcome = outcomes_raw[i] if i < len(outcomes_raw) else "Yes"
+                                result = "yes_wins" if outcome == "Yes" else "no_wins"
+                                log.info(f"RESOLVED via Gamma (closed+dominant): {condition_id[:12]} → {result} (price={price:.2f})")
+                                self._resolution_cache[condition_id] = (True, result)
+                                return (True, result)
+
+        except Exception as e:
+            log.debug(f"Gamma resolution check failed for {condition_id[:12]}: {e}")
+
+        # ── Try CLOB API as fallback ────────────────────────────
         try:
             resp = requests.get(
                 f"{CLOB_API}/markets/{condition_id}",
                 timeout=15,
             )
-            if resp.status_code != 200:
-                return (False, "pending")
+            if resp.status_code == 200:
+                data = resp.json()
 
-            data = resp.json()
-
-            # Only resolve if the market is explicitly marked resolved
-            # AND one outcome's price is at 0.99+ (definitive settlement)
-            if not data.get("resolved"):
-                return (False, "pending")
-
-            tokens = data.get("tokens", [])
-            if not tokens:
-                return (False, "pending")
-
-            for tok in tokens:
-                price = float(tok.get("price", 0))
-                outcome = tok.get("outcome", "")
-                if price >= 0.99:
-                    result = "yes_wins" if outcome == "Yes" else "no_wins"
-                    self._resolution_cache[condition_id] = (True, result)
-                    return (True, result)
-
-            # Resolved but no clear winner (void / ambiguous)
-            # Check if all prices are near zero (void scenario)
-            all_low = all(float(t.get("price", 0)) < 0.10 for t in tokens)
-            if all_low:
-                self._resolution_cache[condition_id] = (True, "void")
-                return (True, "void")
-
-            # Market says resolved but prices haven't settled to 0/1 yet
-            # Wait for definitive settlement
-            return (False, "pending")
+                if data.get("resolved") or data.get("closed"):
+                    tokens = data.get("tokens", [])
+                    for tok in tokens:
+                        price = float(tok.get("price", 0))
+                        outcome = tok.get("outcome", "")
+                        if price >= 0.95:
+                            result = "yes_wins" if outcome == "Yes" else "no_wins"
+                            log.info(f"RESOLVED via CLOB: {condition_id[:12]} → {result} (price={price:.2f})")
+                            self._resolution_cache[condition_id] = (True, result)
+                            return (True, result)
 
         except Exception as e:
-            log.warning(f"Resolution check failed for {condition_id}: {e}")
-            return (False, "pending")
+            log.debug(f"CLOB resolution check failed for {condition_id[:12]}: {e}")
+
+        return (False, "pending")
 
     # ── Internal ────────────────────────────────────────────────────────
     def _fetch_sports_markets(self) -> list[dict]:
@@ -265,11 +318,9 @@ class PolymarketScanner:
                 # Check if this is a 3-way event
                 if has_vs_event and len(eligible_markets) >= 3:
                     # Find the favourite team (highest YES price, skip "draw")
-                    best_yes = 0
-                    best_market = None
+                    team_prices = []
                     for m in eligible_markets:
                         q = (m.get("question") or "").lower()
-                        # Skip draw markets
                         if "draw" in q:
                             continue
                         try:
@@ -278,17 +329,22 @@ class PolymarketScanner:
                                 pr = json.loads(pr)
                             if pr:
                                 yes_price = float(pr[0])
-                                if yes_price > best_yes:
-                                    best_yes = yes_price
-                                    best_market = m
+                                team_prices.append((yes_price, m))
                         except (ValueError, IndexError, TypeError):
                             continue
 
-                    if best_market and best_yes > 0.05:
-                        # Flag this as a 3-way favourite market
+                    # Sort by price descending
+                    team_prices.sort(key=lambda x: x[0], reverse=True)
+
+                    if team_prices and team_prices[0][0] > 0.05:
+                        best_yes = team_prices[0][0]
+                        best_market = team_prices[0][1]
+                        second_yes = team_prices[1][0] if len(team_prices) > 1 else 0
+
                         best_market["_3way_favourite"] = True
                         best_market["_3way_fav_price"] = best_yes
                         best_market["_3way_no_price"] = 1.0 - best_yes
+                        best_market["_3way_second_price"] = second_yes
                         best_market["_3way_fav_outcome"] = (
                             best_market.get("question")
                             or best_market.get("_event_title")
@@ -555,6 +611,16 @@ class PolymarketScanner:
                 volume      = float(market.get("volume", 0) or 0)
                 # Use event title as question for display
                 question    = market.get("_event_title") or question
+
+                # Apply same price checks as 2-way
+                if fav_price < self.min_fav_price or fav_price > self.max_fav_price:
+                    return "no_fav"
+
+                # In 3-way markets, check the favourite actually stands out
+                # from the next-best outcome. If gap is < 4¢ it's a coin flip
+                second_best = market.get("_3way_second_price", 0)
+                if second_best > 0 and abs(fav_price - second_best) < 0.04:
+                    return "coin_flip"
             else:
                 # Standard 2-way market
                 prices_raw = (

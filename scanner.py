@@ -139,16 +139,15 @@ class PolymarketScanner:
     def check_resolution(self, condition_id: str) -> tuple[bool, str]:
         """
         Check if a market has DEFINITIVELY resolved.
-        Tries Gamma API first (more reliable), then CLOB API as fallback.
-        Returns (resolved, result) where result is
-        'yes_wins' | 'no_wins' | 'void' | 'pending'.
+        ONLY triggers on explicit resolved=true from the API.
+        'closed' and 'active=false' are NOT sufficient — these can
+        mean trading is paused (game in progress), not settled.
         """
         if condition_id in self._resolution_cache:
             return self._resolution_cache[condition_id]
 
         # ── Try Gamma API first ─────────────────────────────────
         try:
-            # Try path format first, then query parameter format
             resp = requests.get(
                 f"{GAMMA_API}/markets/{condition_id}",
                 timeout=15,
@@ -161,58 +160,67 @@ class PolymarketScanner:
                 )
             if resp.status_code == 200:
                 raw = resp.json()
-                # Query param format returns a list, path format returns an object
                 if isinstance(raw, list):
                     data = raw[0] if raw else {}
                 else:
                     data = raw
 
-                # Check multiple resolution indicators
-                # API may return booleans or strings
-                closed = str(data.get("closed", "")).lower() in ("true", "1", "yes")
-                resolved = str(data.get("resolved", "")).lower() in ("true", "1", "yes")
-                active = str(data.get("active", "true")).lower() in ("true", "1", "yes")
+                # ONLY trust explicit "resolved" flag
+                resolved_flag = str(data.get("resolved", "")).lower() in ("true", "1", "yes")
 
-                # Market must be closed/resolved and no longer active
-                if closed or resolved or not active:
-                    # Check outcome prices for definitive settlement
-                    prices_raw = data.get("outcomePrices") or data.get("outcome_prices")
-                    outcomes_raw = data.get("outcomes")
+                if not resolved_flag:
+                    # Log state for debugging (only occasionally to avoid spam)
+                    closed = str(data.get("closed", "")).lower() in ("true", "1", "yes")
+                    active = str(data.get("active", "")).lower() in ("true", "1", "yes")
+                    if closed or not active:
+                        log.debug(
+                            f"Market {condition_id[:12]}: closed={closed} active={active} "
+                            f"resolved={resolved_flag} — waiting for explicit resolution"
+                        )
+                    return (False, "pending")
 
-                    if prices_raw:
-                        if isinstance(prices_raw, str):
-                            prices_raw = json.loads(prices_raw)
-                        if isinstance(outcomes_raw, str):
-                            outcomes_raw = json.loads(outcomes_raw)
-                        if not outcomes_raw:
-                            outcomes_raw = ["Yes", "No"]
+                # Market is explicitly resolved — check outcome prices
+                prices_raw = data.get("outcomePrices") or data.get("outcome_prices")
+                outcomes_raw = data.get("outcomes")
 
-                        prices = [float(p) for p in prices_raw]
+                if prices_raw:
+                    if isinstance(prices_raw, str):
+                        prices_raw = json.loads(prices_raw)
+                    if isinstance(outcomes_raw, str):
+                        outcomes_raw = json.loads(outcomes_raw)
+                    if not outcomes_raw:
+                        outcomes_raw = ["Yes", "No"]
 
-                        # Check for definitive settlement (one side at 95%+)
-                        for i, price in enumerate(prices):
-                            if price >= 0.95:
-                                outcome = outcomes_raw[i] if i < len(outcomes_raw) else "Yes"
-                                result = "yes_wins" if outcome == "Yes" else "no_wins"
-                                log.info(f"RESOLVED via Gamma: {condition_id[:12]} → {result} (price={price:.2f})")
-                                self._resolution_cache[condition_id] = (True, result)
-                                return (True, result)
+                    prices = [float(p) for p in prices_raw]
 
-                        # All prices near zero = void
-                        if all(p < 0.05 for p in prices):
-                            log.info(f"RESOLVED via Gamma: {condition_id[:12]} → void")
-                            self._resolution_cache[condition_id] = (True, "void")
-                            return (True, "void")
+                    log.info(
+                        f"RESOLVING {condition_id[:12]}: "
+                        f"outcomes={outcomes_raw} prices={[f'{p:.2f}' for p in prices]}"
+                    )
 
-                        # Closed but prices haven't settled — check if
-                        # one side is clearly dominant (>85%)
-                        for i, price in enumerate(prices):
-                            if price >= 0.85 and (closed or resolved):
-                                outcome = outcomes_raw[i] if i < len(outcomes_raw) else "Yes"
-                                result = "yes_wins" if outcome == "Yes" else "no_wins"
-                                log.info(f"RESOLVED via Gamma (closed+dominant): {condition_id[:12]} → {result} (price={price:.2f})")
-                                self._resolution_cache[condition_id] = (True, result)
-                                return (True, result)
+                    # Find the winning outcome (highest price)
+                    for i, price in enumerate(prices):
+                        if price >= 0.95:
+                            outcome = outcomes_raw[i] if i < len(outcomes_raw) else "Yes"
+                            result = "yes_wins" if outcome == "Yes" else "no_wins"
+                            log.info(
+                                f"RESOLVED via Gamma: {condition_id[:12]} → {result} "
+                                f"(outcome='{outcome}' price={price:.2f})"
+                            )
+                            self._resolution_cache[condition_id] = (True, result)
+                            return (True, result)
+
+                    # All prices near zero = void
+                    if all(p < 0.05 for p in prices):
+                        log.info(f"RESOLVED via Gamma: {condition_id[:12]} → void")
+                        self._resolution_cache[condition_id] = (True, "void")
+                        return (True, "void")
+
+                    # Resolved but prices ambiguous
+                    log.warning(
+                        f"Market {condition_id[:12]} is resolved but prices "
+                        f"are ambiguous: {prices} — skipping"
+                    )
 
         except Exception as e:
             log.debug(f"Gamma resolution check failed for {condition_id[:12]}: {e}")
@@ -226,16 +234,22 @@ class PolymarketScanner:
             if resp.status_code == 200:
                 data = resp.json()
 
-                if data.get("resolved") or data.get("closed"):
-                    tokens = data.get("tokens", [])
-                    for tok in tokens:
-                        price = float(tok.get("price", 0))
-                        outcome = tok.get("outcome", "")
-                        if price >= 0.95:
-                            result = "yes_wins" if outcome == "Yes" else "no_wins"
-                            log.info(f"RESOLVED via CLOB: {condition_id[:12]} → {result} (price={price:.2f})")
-                            self._resolution_cache[condition_id] = (True, result)
-                            return (True, result)
+                # Again, ONLY trust explicit "resolved"
+                if not data.get("resolved"):
+                    return (False, "pending")
+
+                tokens = data.get("tokens", [])
+                for tok in tokens:
+                    price = float(tok.get("price", 0))
+                    outcome = tok.get("outcome", "")
+                    if price >= 0.95:
+                        result = "yes_wins" if outcome == "Yes" else "no_wins"
+                        log.info(
+                            f"RESOLVED via CLOB: {condition_id[:12]} → {result} "
+                            f"(outcome='{outcome}' price={price:.2f})"
+                        )
+                        self._resolution_cache[condition_id] = (True, result)
+                        return (True, result)
 
         except Exception as e:
             log.debug(f"CLOB resolution check failed for {condition_id[:12]}: {e}")

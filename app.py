@@ -316,6 +316,77 @@ def api_trades():
     })
 
 
+@app.route("/api/debug_market")
+def api_debug_market():
+    """Check what the APIs return for open positions — helps debug resolution."""
+    import requests as req
+    results = []
+    for t in state["open_trades"][:5]:  # check first 5 only
+        cid = t["condition_id"]
+        entry = {"condition_id": cid[:16], "question": t["market_question"][:50]}
+
+        # Gamma API
+        try:
+            r = req.get(f"https://gamma-api.polymarket.com/markets/{cid}", timeout=10)
+            if r.status_code == 200:
+                d = r.json()
+                if isinstance(d, list):
+                    d = d[0] if d else {}
+                entry["gamma"] = {
+                    "status": r.status_code,
+                    "closed": d.get("closed"),
+                    "resolved": d.get("resolved"),
+                    "active": d.get("active"),
+                    "outcomes": d.get("outcomes"),
+                    "outcomePrices": d.get("outcomePrices"),
+                    "keys": list(d.keys())[:20],
+                }
+            else:
+                # Try query param format
+                r2 = req.get("https://gamma-api.polymarket.com/markets",
+                            params={"id": cid}, timeout=10)
+                if r2.status_code == 200:
+                    d2 = r2.json()
+                    if isinstance(d2, list):
+                        d2 = d2[0] if d2 else {}
+                    entry["gamma_query"] = {
+                        "status": r2.status_code,
+                        "closed": d2.get("closed"),
+                        "resolved": d2.get("resolved"),
+                        "active": d2.get("active"),
+                        "outcomes": d2.get("outcomes"),
+                        "outcomePrices": d2.get("outcomePrices"),
+                        "keys": list(d2.keys())[:20],
+                    }
+                else:
+                    entry["gamma"] = {"status": r.status_code, "gamma_query_status": r2.status_code}
+        except Exception as e:
+            entry["gamma_error"] = str(e)
+
+        # CLOB API
+        try:
+            r3 = req.get(f"https://clob.polymarket.com/markets/{cid}", timeout=10)
+            if r3.status_code == 200:
+                d3 = r3.json()
+                entry["clob"] = {
+                    "status": r3.status_code,
+                    "closed": d3.get("closed"),
+                    "resolved": d3.get("resolved"),
+                    "active": d3.get("active"),
+                    "tokens": [{"outcome": tk.get("outcome"), "price": tk.get("price")}
+                              for tk in (d3.get("tokens") or [])],
+                    "keys": list(d3.keys())[:20],
+                }
+            else:
+                entry["clob"] = {"status": r3.status_code}
+        except Exception as e:
+            entry["clob_error"] = str(e)
+
+        results.append(entry)
+
+    return jsonify(results)
+
+
 # ── Entry point ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))

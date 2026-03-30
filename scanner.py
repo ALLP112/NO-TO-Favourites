@@ -201,14 +201,13 @@ class PolymarketScanner:
                     # Find the winning outcome (highest price)
                     for i, price in enumerate(prices):
                         if price >= 0.95:
-                            outcome = outcomes_raw[i] if i < len(outcomes_raw) else "Yes"
-                            result = "yes_wins" if outcome == "Yes" else "no_wins"
+                            outcome = outcomes_raw[i] if i < len(outcomes_raw) else "Unknown"
                             log.info(
-                                f"RESOLVED via Gamma: {condition_id[:12]} → {result} "
-                                f"(outcome='{outcome}' price={price:.2f})"
+                                f"RESOLVED via Gamma: {condition_id[:12]} → "
+                                f"winner='{outcome}' (price={price:.2f})"
                             )
-                            self._resolution_cache[condition_id] = (True, result)
-                            return (True, result)
+                            self._resolution_cache[condition_id] = (True, outcome)
+                            return (True, outcome)
 
                     # All prices near zero = void
                     if all(p < 0.05 for p in prices):
@@ -225,7 +224,7 @@ class PolymarketScanner:
         except Exception as e:
             log.debug(f"Gamma resolution check failed for {condition_id[:12]}: {e}")
 
-        # ── Try CLOB API as fallback ────────────────────────────
+        # ── Try CLOB API (primary — Gamma returns 422 for these IDs) ─
         try:
             resp = requests.get(
                 f"{CLOB_API}/markets/{condition_id}",
@@ -234,8 +233,12 @@ class PolymarketScanner:
             if resp.status_code == 200:
                 data = resp.json()
 
-                # Again, ONLY trust explicit "resolved"
-                if not data.get("resolved"):
+                # Polymarket uses closed:true + token prices at 0/1
+                # to indicate settlement. The "resolved" field is
+                # always null — it's never set.
+                is_closed = data.get("closed") is True
+
+                if not is_closed:
                     return (False, "pending")
 
                 tokens = data.get("tokens", [])
@@ -243,13 +246,20 @@ class PolymarketScanner:
                     price = float(tok.get("price", 0))
                     outcome = tok.get("outcome", "")
                     if price >= 0.95:
-                        result = "yes_wins" if outcome == "Yes" else "no_wins"
+                        # Return the winning outcome name directly
+                        # app.py will compare against the stored favourite
                         log.info(
-                            f"RESOLVED via CLOB: {condition_id[:12]} → {result} "
-                            f"(outcome='{outcome}' price={price:.2f})"
+                            f"RESOLVED via CLOB: {condition_id[:12]} → "
+                            f"winner='{outcome}' (price={price:.2f})"
                         )
-                        self._resolution_cache[condition_id] = (True, result)
-                        return (True, result)
+                        self._resolution_cache[condition_id] = (True, outcome)
+                        return (True, outcome)
+
+                # Closed but no token at 0.95+ — might still be settling
+                log.debug(
+                    f"Market {condition_id[:12]} is closed but prices "
+                    f"not settled: {[(t.get('outcome'), t.get('price')) for t in tokens]}"
+                )
 
         except Exception as e:
             log.debug(f"CLOB resolution check failed for {condition_id[:12]}: {e}")

@@ -152,23 +152,33 @@ def _check_resolutions():
     resolved_count = 0
     for t in state["open_trades"]:
         checked += 1
-        resolved, result = scanner.check_resolution(t["condition_id"])
+        resolved, winning_outcome = scanner.check_resolution(t["condition_id"])
         if resolved:
             resolved_count += 1
-            if result == "no_wins":
-                t["result"] = "win"
-                t["profit"] = t["potential_profit"]
-                state["pnl"]["wins"] += 1
-            elif result == "yes_wins":
-                t["result"] = "loss"
-                t["profit"] = -t["stake"]
-                state["pnl"]["losses"] += 1
-            elif result == "void":
+
+            if winning_outcome == "void":
                 t["result"] = "void"
                 t["profit"] = 0.0
             else:
-                t["result"] = "unknown"
-                t["profit"] = 0.0
+                # Compare winning outcome to the favourite we bet NO against
+                fav = t.get("fav_outcome", "")
+
+                # The favourite won → our NO position loses
+                # The favourite lost → our NO position wins
+                if winning_outcome == fav:
+                    t["result"] = "loss"
+                    t["profit"] = -t["stake"]
+                    state["pnl"]["losses"] += 1
+                else:
+                    t["result"] = "win"
+                    t["profit"] = t["potential_profit"]
+                    state["pnl"]["wins"] += 1
+
+                log.info(
+                    f"RESULT: winner='{winning_outcome}' | "
+                    f"we bet NO on '{fav}' | "
+                    f"{'LOSS (fav won)' if winning_outcome == fav else 'WIN (fav lost)'}"
+                )
 
             state["pnl"]["total"] += t["profit"]
             state["allocated_bankroll"] -= t["stake"]

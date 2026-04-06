@@ -311,14 +311,15 @@ class PolymarketScanner:
                 # If event has 3+ markets and title has "vs",
                 # find the favourite team's market and flag it
                 has_vs_event = " vs " in event_title_lower or " vs. " in event_title_lower
-                eligible_markets = []
+
+                # For potential 3-way events, collect ALL sub-markets
+                # (volume check happens at event level, not per sub-market)
+                all_event_markets = []
+                eligible_markets = []  # markets meeting volume threshold individually
 
                 for market in event_markets:
                     cid = market.get("conditionId") or market.get("condition_id")
                     if not cid or cid in seen_cids:
-                        continue
-                    volume = float(market.get("volume", 0) or 0)
-                    if volume < self.min_volume:
                         continue
                     if market.get("marketType") not in (None, "binary"):
                         continue
@@ -337,13 +338,23 @@ class PolymarketScanner:
                     market["_event_category"] = (
                         self._safe_str(event.get("category"))
                     )
-                    eligible_markets.append(market)
 
-                # Check if this is a 3-way event
-                if has_vs_event and len(eligible_markets) >= 3:
+                    volume = float(market.get("volume", 0) or 0)
+                    all_event_markets.append(market)
+                    if volume >= self.min_volume:
+                        eligible_markets.append(market)
+
+                # Calculate total event volume across all sub-markets
+                total_event_volume = sum(
+                    float(m.get("volume", 0) or 0) for m in all_event_markets
+                )
+
+                # Check if this is a 3-way event (soccer, etc)
+                # Use ALL sub-markets for 3-way detection, not just volume-filtered ones
+                if has_vs_event and len(all_event_markets) >= 3 and total_event_volume >= self.min_volume:
                     # Find the favourite team (highest YES price, skip "draw")
                     team_prices = []
-                    for m in eligible_markets:
+                    for m in all_event_markets:
                         q = (m.get("question") or "").lower()
                         if "draw" in q:
                             continue
@@ -374,9 +385,16 @@ class PolymarketScanner:
                             or best_market.get("_event_title")
                             or "Unknown"
                         )
+                        # Use total event volume so soccer markets pass volume check
+                        best_market["volume"] = total_event_volume
                         cid = best_market.get("conditionId") or best_market.get("condition_id")
                         all_markets.append(best_market)
                         seen_cids.add(cid)
+                        log.debug(
+                            f"3-way detected: {event_title[:50]} | "
+                            f"fav={best_market['_3way_fav_outcome'][:20]} @ {best_yes:.0%} | "
+                            f"vol ${total_event_volume:,.0f}"
+                        )
 
                     # Also add any 2-way markets from the same event
                     # (spreads etc. will be filtered later)

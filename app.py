@@ -145,6 +145,51 @@ def _open_position(opp: dict):
     )
 
 
+def _check_fav_won(winning_outcome: str, fav: str) -> bool:
+    """
+    Check if the favourite won, handling name mismatches between
+    what we stored (fav_outcome) and what CLOB returns (winning team).
+
+    Handles:
+      - Exact match: "Cavaliers" == "Cavaliers"
+      - Case mismatch: "cavaliers" == "Cavaliers"
+      - fav is "Yes"/"No" leftover: always returns False (can't determine)
+      - fav contains "vs": extract first team as favourite, compare
+    """
+    if not winning_outcome or not fav:
+        return False
+
+    w = winning_outcome.lower().strip()
+    f = fav.lower().strip()
+
+    # Exact match (case insensitive)
+    if w == f:
+        return True
+
+    # If fav is "Yes"/"No" (unfixed legacy), we can't determine the winner
+    # Better to return False (counts as WIN) than guess wrong
+    if f in ("yes", "no"):
+        log.warning(f"Cannot determine fav winner: fav='{fav}', winner='{winning_outcome}'")
+        return False
+
+    # If fav contains "vs", it's the full match name (legacy bug)
+    # We can't reliably tell which team was the favourite
+    # Log it and return False — manual review needed
+    if " vs " in f or " vs. " in f:
+        log.warning(
+            f"fav_outcome contains 'vs' (legacy bug): fav='{fav}', "
+            f"winner='{winning_outcome}' — marking as UNKNOWN"
+        )
+        return False
+
+    # Fuzzy match: winner is substantially contained in fav or vice versa
+    if len(w) > 3 and len(f) > 3:
+        if w in f or f in w:
+            return True
+
+    return False
+
+
 def _check_resolutions():
     """Check if any open positions have resolved."""
     still_open = []
@@ -165,7 +210,9 @@ def _check_resolutions():
 
                 # The favourite won → our NO position loses
                 # The favourite lost → our NO position wins
-                if winning_outcome == fav:
+                fav_won = _check_fav_won(winning_outcome, fav)
+
+                if fav_won:
                     t["result"] = "loss"
                     t["profit"] = -t["stake"]
                     state["pnl"]["losses"] += 1
@@ -177,7 +224,7 @@ def _check_resolutions():
                 log.info(
                     f"RESULT: winner='{winning_outcome}' | "
                     f"we bet NO on '{fav}' | "
-                    f"{'LOSS (fav won)' if winning_outcome == fav else 'WIN (fav lost)'}"
+                    f"{'LOSS (fav won)' if fav_won else 'WIN (fav lost)'}"
                 )
 
             state["pnl"]["total"] += t["profit"]

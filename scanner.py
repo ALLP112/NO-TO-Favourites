@@ -689,6 +689,28 @@ class PolymarketScanner:
                 fav_price   = prices[fav_idx]
                 fav_outcome = outcomes_raw[fav_idx]
 
+                # ── Fix fav_outcome: must be a team name, not "Yes"/"No" ──
+                # Polymarket outcomes can be ["Yes","No"] or team names
+                # CLOB resolution returns team names, so we must store
+                # the team name for correct win/loss comparison
+                q_has_vs = " vs " in q_lower or " vs. " in q_lower
+                if fav_outcome in ("Yes", "No") and q_has_vs:
+                    # Extract team names from question "Team A vs. Team B"
+                    parts = question.replace(" vs. ", " vs ").split(" vs ")
+                    if len(parts) >= 2:
+                        if fav_idx == 0:
+                            fav_outcome = parts[0].strip()
+                        else:
+                            fav_outcome = parts[1].strip()
+                elif " vs " in fav_outcome or " vs. " in fav_outcome:
+                    # fav_outcome is the full match name — extract the fav team
+                    parts = fav_outcome.replace(" vs. ", " vs ").split(" vs ")
+                    if len(parts) >= 2:
+                        if fav_idx == 0:
+                            fav_outcome = parts[0].strip()
+                        else:
+                            fav_outcome = parts[1].strip()
+
                 # Skip 50/50 markets — no clear favourite
                 if abs(prices[0] - prices[1]) < 0.04:
                     return "coin_flip"

@@ -407,12 +407,15 @@ class PolymarketScanner:
                             f"vol ${total_event_volume:,.0f}"
                         )
 
-                    # Also add any 2-way markets from the same event
-                    # (spreads etc. will be filtered later)
+                    # Also add any 2-way match-winner markets from the same event
+                    # (spreads, draws, props will be filtered by _evaluate_market_debug)
                     for m in eligible_markets:
                         cid = m.get("conditionId") or m.get("condition_id")
                         if cid not in seen_cids:
                             q = (m.get("question") or "").lower()
+                            # Skip draw markets early — not a team bet
+                            if "draw" in q:
+                                continue
                             if " vs " in q or " vs. " in q:
                                 all_markets.append(m)
                                 seen_cids.add(cid)
@@ -606,15 +609,20 @@ class PolymarketScanner:
                 if not has_vs:
                     return "not_fixture"
 
-            # ── Only match-winner markets (reject spreads, O/U, totals) ─
+            # ── Only match-winner markets (reject spreads, O/U, totals, draws) ─
             derivative_markers = [
+                # Draw markets — NOT a team bet
+                "draw", "end in a draw", "match draw", "- draw",
+                # Spreads and handicaps
                 "spread", "o/u ", "over/under", "over or under",
                 "total points", "total goals", "total runs",
                 "total score", "total combined",
                 "handicap", "margin", "first to score",
+                # Half/period/quarter props
                 "first half", "second half", "1st half", "2nd half",
                 "first quarter", "first period", "first set",
-                "1h moneyline", "2h moneyline",  # Half moneylines
+                "1h moneyline", "2h moneyline",
+                # Stat props
                 "most ", "highest ", "lowest ", "exact score",
                 "both teams to score", "btts",
                 "anytime ", "player prop", "mvp",
@@ -624,6 +632,7 @@ class PolymarketScanner:
                 "aces", "double faults",
                 "corners", "cards", "bookings",
                 "top ", "finish position",
+                # Game/map specific (esports, tennis)
                 "game 1 winner", "game 2 winner", "game 3 winner",
                 "map 1", "map 2", "map 3",
                 # LoL/Dota esports props
@@ -631,7 +640,7 @@ class PolymarketScanner:
                 "first blood", "first tower", "first kill",
                 "first roshan", "first inhibitor",
                 "both teams slay", "total kills",
-                "game 1:", "game 2:", "game 3:",  # Game-specific props
+                "game 1:", "game 2:", "game 3:",
             ]
             if any(kw in q_lower for kw in derivative_markers):
                 return "derivative"

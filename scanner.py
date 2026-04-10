@@ -735,6 +735,7 @@ class PolymarketScanner:
                 "hours_until_resolve":  round(hours_until_resolve, 1),
                 "market_type":          "binary",
                 "sport":                sport_label,
+                "is_3way":              is_3way,  # Flag for 3-way soccer markets
                 "driver": (
                     f"Favourite '{fav_outcome}' at {fav_price:.0%}. "
                     f"NO shares at {no_price:.0%}. "

@@ -128,6 +128,7 @@ def _open_position(opp: dict):
         "opened_at":           _now(),
         "result":              None,
         "profit":              0.0,
+        "is_3way":             opp.get("is_3way", False),  # Track 3-way soccer markets
     }
 
     state["open_trades"].append(trade)
@@ -207,11 +208,24 @@ def _check_resolutions():
             else:
                 # Compare winning outcome to the favourite we bet NO against
                 fav = t.get("fav_outcome", "")
+                is_3way = t.get("is_3way", False)
+
+                # 3-way soccer markets: CLOB returns "Yes"/"No" not team names
+                # "Yes" = team in the question won → favourite won → we LOSE
+                # "No"  = team didn't win (drew/lost) → favourite lost → we WIN
+                if is_3way and winning_outcome.lower() in ("yes", "no"):
+                    fav_won = (winning_outcome.lower() == "yes")
+                    log.info(
+                        f"3-WAY MARKET: winner='{winning_outcome}' | "
+                        f"fav_outcome='{fav[:40]}' | "
+                        f"fav_won={fav_won}"
+                    )
+                else:
+                    # Standard 2-way: compare team names
+                    fav_won = _check_fav_won(winning_outcome, fav)
 
                 # The favourite won → our NO position loses
                 # The favourite lost → our NO position wins
-                fav_won = _check_fav_won(winning_outcome, fav)
-
                 if fav_won:
                     t["result"] = "loss"
                     t["profit"] = -t["stake"]
@@ -224,6 +238,7 @@ def _check_resolutions():
                 log.info(
                     f"RESULT: winner='{winning_outcome}' | "
                     f"we bet NO on '{fav}' | "
+                    f"is_3way={is_3way} | "
                     f"{'LOSS (fav won)' if fav_won else 'WIN (fav lost)'}"
                 )
 

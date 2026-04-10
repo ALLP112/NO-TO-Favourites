@@ -380,11 +380,22 @@ class PolymarketScanner:
                         best_market["_3way_fav_price"] = best_yes
                         best_market["_3way_no_price"] = 1.0 - best_yes
                         best_market["_3way_second_price"] = second_yes
-                        best_market["_3way_fav_outcome"] = (
+                        
+                        # Extract team name from question "Will {Team} win on {date}?"
+                        raw_q = (
                             best_market.get("question")
                             or best_market.get("_event_title")
                             or "Unknown"
                         )
+                        team_name = raw_q
+                        if raw_q.lower().startswith("will ") and " win" in raw_q.lower():
+                            # Extract team name between "Will " and " win"
+                            start = 5  # len("Will ")
+                            end = raw_q.lower().find(" win")
+                            if end > start:
+                                team_name = raw_q[start:end].strip()
+                        best_market["_3way_fav_outcome"] = team_name
+                        
                         # Use total event volume so soccer markets pass volume check
                         best_market["volume"] = total_event_volume
                         cid = best_market.get("conditionId") or best_market.get("condition_id")
@@ -603,6 +614,7 @@ class PolymarketScanner:
                 "handicap", "margin", "first to score",
                 "first half", "second half", "1st half", "2nd half",
                 "first quarter", "first period", "first set",
+                "1h moneyline", "2h moneyline",  # Half moneylines
                 "most ", "highest ", "lowest ", "exact score",
                 "both teams to score", "btts",
                 "anytime ", "player prop", "mvp",
@@ -614,6 +626,12 @@ class PolymarketScanner:
                 "top ", "finish position",
                 "game 1 winner", "game 2 winner", "game 3 winner",
                 "map 1", "map 2", "map 3",
+                # LoL/Dota esports props
+                "slay a dragon", "first dragon", "first baron",
+                "first blood", "first tower", "first kill",
+                "first roshan", "first inhibitor",
+                "both teams slay", "total kills",
+                "game 1:", "game 2:", "game 3:",  # Game-specific props
             ]
             if any(kw in q_lower for kw in derivative_markers):
                 return "derivative"
@@ -710,6 +728,28 @@ class PolymarketScanner:
                             fav_outcome = parts[0].strip()
                         else:
                             fav_outcome = parts[1].strip()
+                
+                # ── Clean up esports prefixes and suffixes ──
+                # Esports questions have patterns like:
+                # "Valorant: Team A vs Team B (BO3) - Tournament Name"
+                # "Counter-Strike: Team A vs Team B (BO3) - Event"
+                # "LoL: Team A vs Team B (BO3) - League"
+                esports_prefixes = [
+                    "valorant: ", "counter-strike: ", "cs: ", "lol: ", 
+                    "dota 2: ", "dota: ", "league of legends: ",
+                ]
+                fav_lower = fav_outcome.lower()
+                for prefix in esports_prefixes:
+                    if fav_lower.startswith(prefix):
+                        fav_outcome = fav_outcome[len(prefix):]
+                        break
+                
+                # Remove common suffixes like "(BO3)", "- Tournament Name"
+                # Find first parenthesis or " - " after the team name
+                if " (" in fav_outcome:
+                    fav_outcome = fav_outcome.split(" (")[0].strip()
+                if " - " in fav_outcome:
+                    fav_outcome = fav_outcome.split(" - ")[0].strip()
 
                 # Skip 50/50 markets — no clear favourite
                 if abs(prices[0] - prices[1]) < 0.04:

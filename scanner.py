@@ -716,27 +716,48 @@ class PolymarketScanner:
                 fav_price   = prices[fav_idx]
                 fav_outcome = outcomes_raw[fav_idx]
 
-                # ── Fix fav_outcome: must be a team name, not "Yes"/"No" ──
-                # Polymarket outcomes can be ["Yes","No"] or team names
-                # CLOB resolution returns team names, so we must store
-                # the team name for correct win/loss comparison
+                # ── Fix fav_outcome: must be a clean team name ──
+                # Polymarket outcomes can be ["Yes","No"], team names,
+                # or full match names like "Team A vs Team B"
+                
+                fav_outcome_lower = fav_outcome.lower().strip()
                 q_has_vs = " vs " in q_lower or " vs. " in q_lower
-                if fav_outcome in ("Yes", "No") and q_has_vs:
+                
+                # Case 1: outcome is "Yes"/"No" (case-insensitive)
+                if fav_outcome_lower in ("yes", "no") and q_has_vs:
                     # Extract team names from question "Team A vs. Team B"
+                    q_normalized = question.lower().replace(" vs. ", " vs ")
                     parts = question.replace(" vs. ", " vs ").split(" vs ")
                     if len(parts) >= 2:
                         if fav_idx == 0:
                             fav_outcome = parts[0].strip()
                         else:
                             fav_outcome = parts[1].strip()
-                elif " vs " in fav_outcome or " vs. " in fav_outcome:
+                
+                # Case 2: outcome contains "vs" (full match name)
+                elif " vs " in fav_outcome_lower or " vs. " in fav_outcome_lower:
                     # fav_outcome is the full match name — extract the fav team
-                    parts = fav_outcome.replace(" vs. ", " vs ").split(" vs ")
+                    parts = fav_outcome.replace(" vs. ", " vs ").replace(" VS ", " vs ").split(" vs ")
                     if len(parts) >= 2:
                         if fav_idx == 0:
                             fav_outcome = parts[0].strip()
                         else:
                             fav_outcome = parts[1].strip()
+                
+                # Case 3: fallback — if still contains "vs", extract from question
+                fav_outcome_lower = fav_outcome.lower()
+                if (" vs " in fav_outcome_lower or " vs. " in fav_outcome_lower) and q_has_vs:
+                    parts = question.replace(" vs. ", " vs ").split(" vs ")
+                    if len(parts) >= 2:
+                        if fav_idx == 0:
+                            fav_outcome = parts[0].strip()
+                        else:
+                            fav_outcome = parts[1].strip()
+                
+                # ── Strip any errant "NO on" or "Yes on" prefixes ──
+                for bad_prefix in ["no on ", "yes on ", "no - ", "yes - "]:
+                    if fav_outcome.lower().startswith(bad_prefix):
+                        fav_outcome = fav_outcome[len(bad_prefix):].strip()
                 
                 # ── Clean up esports prefixes and suffixes ──
                 # Esports questions have patterns like:

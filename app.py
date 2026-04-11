@@ -110,7 +110,7 @@ def _open_position(opp: dict):
     trade = {
         "condition_id":        opp["condition_id"],
         "market_question":     opp["question"],
-        "selection":           f"NO on {opp['fav_outcome']}",
+        "selection":           opp['fav_outcome'],  # Just team name, template adds "NO on"
         "market_domain":       opp.get("sport", "Sports"),
         "market_structure":    opp.get("market_type", "binary"),
         "expected_settlement": opp.get("end_date", "unknown"),

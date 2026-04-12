@@ -780,6 +780,13 @@ class PolymarketScanner:
                     fav_outcome = fav_outcome.split(" (")[0].strip()
                 if " - " in fav_outcome:
                     fav_outcome = fav_outcome.split(" - ")[0].strip()
+                
+                # FINAL check: if fav_outcome STILL contains "vs" after all cleanup,
+                # extract just the favourite team based on fav_idx
+                if " vs " in fav_outcome.lower() or " vs. " in fav_outcome.lower():
+                    parts = fav_outcome.replace(" vs. ", " vs ").replace(" VS ", " vs ").split(" vs ")
+                    if len(parts) >= 2:
+                        fav_outcome = parts[0].strip() if fav_idx == 0 else parts[1].strip()
 
                 # Skip 50/50 markets — no clear favourite
                 if abs(prices[0] - prices[1]) < 0.04:

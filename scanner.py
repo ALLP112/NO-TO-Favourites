@@ -67,7 +67,7 @@ SPORTS_KEYWORDS_SLUG = [
 class PolymarketScanner:
     def __init__(
         self,
-        min_volume: float = 30_000,
+        min_volume: float = 20_000,
         min_fav_price: float = 0.05,
         max_fav_price: float = 0.95,
         max_hours_until_resolve: float = 168.0,

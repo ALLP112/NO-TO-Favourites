@@ -581,7 +581,7 @@ function updateStatus(d) {
     document.getElementById('sStake').textContent = '$' + fmt(stake);
     document.getElementById('sBankroll').textContent = '$' + fmt(bankroll);
     document.getElementById('sMaxPos').textContent = maxPos;
-    var minVol = d.min_volume || 30000;
+    var minVol = d.min_volume || 20000;
     document.getElementById('sVolume').textContent = '$' + (minVol >= 1000 ? fmt(minVol/1000) + 'k+' : fmt(minVol) + '+');
 
     var pnl = d.pnl || {total:0, wins:0, losses:0};

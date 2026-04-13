@@ -174,12 +174,28 @@ def _check_fav_won(winning_outcome: str, fav: str) -> bool:
         return False
 
     # If fav contains "vs", it's the full match name (legacy bug)
-    # We can't reliably tell which team was the favourite
-    # Log it and return False — manual review needed
+    # Try to extract team names and check if winner matches either
     if " vs " in f or " vs. " in f:
+        # Normalize and split
+        f_normalized = f.replace(" vs. ", " vs ")
+        parts = f_normalized.split(" vs ")
+        if len(parts) >= 2:
+            team1 = parts[0].strip()
+            team2 = parts[1].strip()
+            # Check if winner matches either team (fuzzy)
+            if w == team1 or (len(w) > 3 and len(team1) > 3 and (w in team1 or team1 in w)):
+                log.info(f"fav_outcome 'vs' bug: matched winner '{w}' to team1 '{team1}' — fav WON")
+                return True
+            if w == team2 or (len(w) > 3 and len(team2) > 3 and (w in team2 or team2 in w)):
+                log.info(f"fav_outcome 'vs' bug: matched winner '{w}' to team2 '{team2}' — fav WON")
+                return True
+            # Winner doesn't match either team — favourite lost
+            log.info(f"fav_outcome 'vs' bug: winner '{w}' not in '{team1}' or '{team2}' — fav LOST")
+            return False
+        # Couldn't parse — log and return False (conservative)
         log.warning(
-            f"fav_outcome contains 'vs' (legacy bug): fav='{fav}', "
-            f"winner='{winning_outcome}' — marking as UNKNOWN"
+            f"fav_outcome contains 'vs' but couldn't parse: fav='{fav}', "
+            f"winner='{winning_outcome}' — marking as LOSS (conservative)"
         )
         return False
 

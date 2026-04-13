@@ -18,7 +18,7 @@ from scanner import PolymarketScanner
 BANKROLL          = float(os.getenv("BANKROLL", 10_000))
 STAKE_PER_POS     = float(os.getenv("STAKE_PER_POS", 400))
 MAX_OPEN          = int(os.getenv("MAX_OPEN", 25))         # floor(10000/400)
-MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 30_000))
+MIN_VOLUME        = float(os.getenv("MIN_VOLUME", 20_000))
 MAX_FAV_PRICE     = float(os.getenv("MAX_FAV_PRICE", 0.95))
 MIN_FAV_PRICE     = float(os.getenv("MIN_FAV_PRICE", 0.05))
 MAX_HOURS         = float(os.getenv("MAX_HOURS", 168))      # endDate = resolution deadline, not game time. 168h = 7 days
@@ -174,28 +174,45 @@ def _check_fav_won(winning_outcome: str, fav: str) -> bool:
         return False
 
     # If fav contains "vs", it's the full match name (legacy bug)
-    # Try to extract team names and check if winner matches either
+    # In "A vs B" format, team A (first team) is ALWAYS the favourite
+    # (Polymarket's "Yes" answer = first team wins)
     if " vs " in f or " vs. " in f:
-        # Normalize and split
+        # First check if winner is simply "Yes" or "No"
+        if w == "yes":
+            log.info(f"fav_outcome 'vs' bug: winner='Yes' — fav WON")
+            return True
+        if w == "no":
+            log.info(f"fav_outcome 'vs' bug: winner='No' — fav LOST")
+            return False
+        
+        # Normalize and split to extract team names
         f_normalized = f.replace(" vs. ", " vs ")
         parts = f_normalized.split(" vs ")
         if len(parts) >= 2:
-            team1 = parts[0].strip()
-            team2 = parts[1].strip()
-            # Check if winner matches either team (fuzzy)
+            team1 = parts[0].strip()  # First team = favourite
+            team2 = parts[1].strip()  # Second team = underdog
+            
+            # Check if winner matches team1 (the favourite)
             if w == team1 or (len(w) > 3 and len(team1) > 3 and (w in team1 or team1 in w)):
-                log.info(f"fav_outcome 'vs' bug: matched winner '{w}' to team1 '{team1}' — fav WON")
+                log.info(f"fav_outcome 'vs' bug: winner '{w}' matches fav team1 '{team1}' — fav WON")
                 return True
+            
+            # Check if winner matches team2 (the underdog) — means favourite LOST
             if w == team2 or (len(w) > 3 and len(team2) > 3 and (w in team2 or team2 in w)):
-                log.info(f"fav_outcome 'vs' bug: matched winner '{w}' to team2 '{team2}' — fav WON")
-                return True
-            # Winner doesn't match either team — favourite lost
-            log.info(f"fav_outcome 'vs' bug: winner '{w}' not in '{team1}' or '{team2}' — fav LOST")
+                log.info(f"fav_outcome 'vs' bug: winner '{w}' matches underdog team2 '{team2}' — fav LOST")
+                return False
+            
+            # Winner doesn't match either team — can't determine
+            log.warning(
+                f"fav_outcome 'vs' bug: winner '{w}' doesn't match "
+                f"team1='{team1}' or team2='{team2}' — defaulting to LOSS"
+            )
             return False
-        # Couldn't parse — log and return False (conservative)
+        
+        # Couldn't parse — log and default to False (conservative = counts as WIN)
         log.warning(
             f"fav_outcome contains 'vs' but couldn't parse: fav='{fav}', "
-            f"winner='{winning_outcome}' — marking as LOSS (conservative)"
+            f"winner='{winning_outcome}' — defaulting to fav LOST"
         )
         return False
 

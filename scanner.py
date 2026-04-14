@@ -101,6 +101,7 @@ class PolymarketScanner:
         not_fixture = 0
         derivative = 0
         no_fav = 0
+        weak_3way = 0
         accepted = 0
 
         for m in markets:
@@ -122,6 +123,8 @@ class PolymarketScanner:
                 not_fixture += 1
             elif opp == "derivative":
                 derivative += 1
+            elif opp == "3way_weak_fav":
+                weak_3way += 1
             else:
                 no_fav += 1
 
@@ -132,7 +135,7 @@ class PolymarketScanner:
             f"{len(markets)} markets ({self.min_hours}h-{self.max_hours}h) | "
             f"Rejected: not_sports={not_sports} no_vs={not_fixture} "
             f"derivative={derivative} no_dates={no_dates} past={already_past} "
-            f"too_soon={too_soon} too_far={too_far} no_fav={no_fav}"
+            f"too_soon={too_soon} too_far={too_far} no_fav={no_fav} weak_3way={weak_3way}"
         )
         return opps
 
@@ -681,8 +684,17 @@ class PolymarketScanner:
                 # Use event title as question for display
                 question    = market.get("_event_title") or question
 
-                # Apply same price checks as 2-way
-                if fav_price < self.min_fav_price or fav_price > self.max_fav_price:
+                # 3-WAY MARKETS: require favourite to be >= 50%
+                # The NO-on-Favourites strategy is designed for 2-way markets
+                # where the favourite is clearly >50%. In 3-way markets, a 
+                # "favourite" at 38% has completely different risk/reward:
+                # - NO at 62¢ covers both Draw + Opponent win
+                # - Much lower edge even if overpriced
+                # Only trade 3-way markets with a dominant favourite (≥50%)
+                if fav_price < 0.50:
+                    return "3way_weak_fav"
+                
+                if fav_price > self.max_fav_price:
                     return "no_fav"
 
                 # In 3-way markets, check the favourite actually stands out
